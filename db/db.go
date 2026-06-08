@@ -2,6 +2,9 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
+
+	_ "github.com/duckdb/duckdb-go/v2"
 )
 
 // DBManager wraps the DuckDB connection and handles schema initialization and batch insertions.
@@ -55,20 +58,76 @@ type CountryStat struct {
 
 // NewDBManager initializes a new database manager.
 func NewDBManager(dbPath string) (*DBManager, error) {
-	// TODO: Connect to duckdb using the official driver.
-	return nil, nil
+	db, err := sql.Open("duckdb", dbPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return &DBManager{
+		dbPath: dbPath,
+		db:     db,
+	}, nil
 }
 
 // Close closes the underlying DuckDB database connection.
 func (m *DBManager) Close() error {
-	// TODO: Close database.
+	if m.db != nil {
+		return m.db.Close()
+	}
 	return nil
 }
 
 // CreateSchema initializes the database tables (papers, authors, institutions, countries, contributions).
 func (m *DBManager) CreateSchema() error {
-	// TODO: Execute CREATE TABLE DDL queries.
-	return nil
+	queries := []string{
+		`CREATE TABLE IF NOT EXISTS papers (
+			id VARCHAR PRIMARY KEY, doi VARCHAR, title TEXT,
+			publication_year INTEGER, publication_date VARCHAR, type VARCHAR,
+			journal_name VARCHAR, journal_issn VARCHAR, is_core_journal BOOLEAN,
+			publisher VARCHAR, is_oa BOOLEAN, oa_status VARCHAR, oa_url VARCHAR,
+			cited_by_count INTEGER, citation_percentile DOUBLE,
+			is_top_1_percent BOOLEAN, is_top_10_percent BOOLEAN, fwci DOUBLE,
+			primary_topic_id VARCHAR, primary_topic_name VARCHAR, primary_topic_score DOUBLE,
+			primary_topic_field VARCHAR, primary_topic_subfield VARCHAR, primary_topic_domain VARCHAR,
+			institutions_distinct_count INTEGER, countries_distinct_count INTEGER,
+			is_international BOOLEAN, abstract_text TEXT, updated_date VARCHAR
+		)`,
+		`CREATE TABLE IF NOT EXISTS authors (
+			id VARCHAR PRIMARY KEY, display_name VARCHAR, orcid VARCHAR
+		)`,
+		`CREATE TABLE IF NOT EXISTS institutions (
+			id VARCHAR PRIMARY KEY, display_name VARCHAR,
+			country_code VARCHAR, type VARCHAR, ror_id VARCHAR,
+			is_synthetic BOOLEAN DEFAULT FALSE
+		)`,
+		`CREATE TABLE IF NOT EXISTS countries (
+			id INTEGER PRIMARY KEY, country_name VARCHAR, country_code VARCHAR UNIQUE, status INTEGER
+		)`,
+		`CREATE TABLE IF NOT EXISTS contributions (
+			row_id INTEGER PRIMARY KEY, paper_id VARCHAR, author_id VARCHAR,
+			institution_id VARCHAR, country_code VARCHAR, author_name VARCHAR,
+			author_position VARCHAR, is_corresponding BOOLEAN, raw_affiliation_string VARCHAR
+		)`,
+	}
+
+	for _, q := range queries {
+		if _, err := m.db.Exec(q); err != nil {
+			return err
+		}
+	}
+
+	// Initialize contribution sequence seq_contrib
+	var maxID int
+	err := m.db.QueryRow("SELECT COALESCE(MAX(row_id), 0) FROM contributions").Scan(&maxID)
+	if err != nil {
+		maxID = 0
+	}
+	m.db.Exec("DROP SEQUENCE IF EXISTS seq_contrib")
+	_, err = m.db.Exec(fmt.Sprintf("CREATE SEQUENCE seq_contrib START %d", maxID+1))
+	return err
 }
 
 // LoadJSONL parses a downloaded JSONL file and loads normalized records into DuckDB with progress updates.
