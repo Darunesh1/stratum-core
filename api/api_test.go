@@ -146,7 +146,11 @@ func TestStatsRoute(t *testing.T) {
 	}
 
 	// Prepare mock schema and mock data
-	err = server.dbMgr.CreateSchema()
+	dbMgr, err := server.getDBMgr("default")
+	if err != nil {
+		t.Fatalf("failed to get db manager: %v", err)
+	}
+	err = dbMgr.CreateSchema()
 	if err != nil {
 		t.Fatalf("failed to create schema: %v", err)
 	}
@@ -191,7 +195,11 @@ func TestQueryRoute(t *testing.T) {
 		t.Fatalf("RegisterRoutes failed: %v", err)
 	}
 
-	err = server.dbMgr.CreateSchema()
+	dbMgr, err := server.getDBMgr("default")
+	if err != nil {
+		t.Fatalf("failed to get db manager: %v", err)
+	}
+	err = dbMgr.CreateSchema()
 	if err != nil {
 		t.Fatalf("failed to create schema: %v", err)
 	}
@@ -373,5 +381,80 @@ func TestPipelineRoutes(t *testing.T) {
 	// Check that logs list is populated.
 	if len(status.Logs) == 0 {
 		t.Errorf("expected logs captured, got 0 logs")
+	}
+}
+
+func TestProjectsAndHistory(t *testing.T) {
+	dbPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+	defer os.RemoveAll("projects")
+
+	server := NewAPIServer("localhost:8080", dbPath)
+	err := server.RegisterRoutes()
+	if err != nil {
+		t.Fatalf("RegisterRoutes failed: %v", err)
+	}
+
+	// 1. List projects initially (should contain "default")
+	reqList := httptest.NewRequest("GET", "/api/projects", nil)
+	wList := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(wList, reqList)
+
+	if wList.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", wList.Code)
+	}
+	var listResp map[string][]string
+	json.NewDecoder(wList.Body).Decode(&listResp)
+	if len(listResp["projects"]) != 1 || listResp["projects"][0] != "default" {
+		t.Errorf("unexpected projects list: %v", listResp["projects"])
+	}
+
+	// 2. Create new project "test-proj"
+	createBody, _ := json.Marshal(map[string]string{
+		"name": "test-proj",
+	})
+	reqCreate := httptest.NewRequest("POST", "/api/projects/create", bytes.NewBuffer(createBody))
+	wCreate := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(wCreate, reqCreate)
+
+	if wCreate.Code != http.StatusOK {
+		t.Fatalf("failed to create project: %d, body: %s", wCreate.Code, wCreate.Body.String())
+	}
+
+	// 3. List projects again (should contain "default" and "test-proj")
+	wList2 := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(wList2, reqList)
+	json.NewDecoder(wList2.Body).Decode(&listResp)
+	found := false
+	for _, p := range listResp["projects"] {
+		if p == "test-proj" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("project test-proj not found in list: %v", listResp["projects"])
+	}
+
+	// 4. Test configuration and history in "test-proj"
+	reqGetConfig := httptest.NewRequest("GET", "/api/config?project=test-proj", nil)
+	wGetConfig := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(wGetConfig, reqGetConfig)
+
+	if wGetConfig.Code != http.StatusOK {
+		t.Fatalf("failed to get project config: %d", wGetConfig.Code)
+	}
+
+	var configResp struct {
+		Keywords string           `json:"keywords"`
+		History  []ConfigRevision `json:"history"`
+	}
+	json.NewDecoder(wGetConfig.Body).Decode(&configResp)
+
+	// Projects are pre-populated with Version 1 "Project Created" revision
+	if len(configResp.History) == 0 {
+		t.Errorf("expected history revision, got 0")
+	} else if configResp.History[0].Label != "Project Created" {
+		t.Errorf("expected initial revision label 'Project Created', got %q", configResp.History[0].Label)
 	}
 }
