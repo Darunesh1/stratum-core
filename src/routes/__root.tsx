@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { Link, Outlet } from '@tanstack/react-router'
 import { LayoutDashboard, Settings, Database, BookOpen, Sun, Moon } from 'lucide-react'
+import { ProjectContext } from '../context/ProjectContext'
 
 export function Root() {
   const [darkMode, setDarkMode] = useState(() => {
@@ -14,6 +15,65 @@ export function Root() {
     }
     return false
   })
+
+  const [activeProject, setActiveProject] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('activeProject')
+      return saved || 'default'
+    }
+    return 'default'
+  })
+  const [projects, setProjects] = useState<string[]>(['default'])
+
+  const fetchProjects = async () => {
+    try {
+      const response = await fetch('/api/projects')
+      if (response.ok) {
+        const data = await response.json()
+        setProjects(data.projects || ['default'])
+      }
+    } catch (err) {
+      console.error('Failed to load projects list:', err)
+    }
+  }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchProjects()
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem('activeProject', activeProject)
+  }, [activeProject])
+
+  const handleCreateProject = async () => {
+    const name = prompt(
+      'Enter a name for the new project (alphanumeric, hyphens/underscores only):',
+    )
+    if (!name) return
+    const sanitized = name.replace(/[^a-zA-Z0-9_-]/g, '').trim()
+    if (!sanitized) {
+      alert('Invalid project name.')
+      return
+    }
+
+    try {
+      const response = await fetch('/api/projects/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: sanitized }),
+      })
+      if (response.ok) {
+        await fetchProjects()
+        setActiveProject(sanitized)
+      } else {
+        const errData = await response.json()
+        alert('Failed to create project: ' + (errData.error || response.statusText))
+      }
+    } catch (err) {
+      alert('Connection error: ' + String(err))
+    }
+  }
 
   useEffect(() => {
     if (darkMode) {
@@ -40,6 +100,33 @@ export function Root() {
                 v0.1
               </span>
             </div>
+          </div>
+
+          {/* Project Selector Area */}
+          <div className="flex flex-col gap-2 p-4 border-b border-zinc-200 dark:border-zinc-850 bg-zinc-100/30 dark:bg-zinc-900/10">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-zinc-400">
+                Active Project
+              </span>
+              <button
+                type="button"
+                onClick={handleCreateProject}
+                className="text-[9px] font-mono font-bold uppercase text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 cursor-pointer"
+              >
+                + New
+              </button>
+            </div>
+            <select
+              value={activeProject}
+              onChange={(e) => setActiveProject(e.target.value)}
+              className="w-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-1.5 rounded font-mono text-xs focus:outline-none"
+            >
+              {projects.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* Navigation Links */}
@@ -136,7 +223,9 @@ export function Root() {
 
       {/* Main Component Stage */}
       <main className="flex-1 overflow-y-auto p-10 select-text">
-        <Outlet />
+        <ProjectContext.Provider value={{ activeProject, setActiveProject }}>
+          <Outlet />
+        </ProjectContext.Provider>
       </main>
     </div>
   )

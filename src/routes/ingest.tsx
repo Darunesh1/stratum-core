@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { useProject } from '../context/ProjectContext'
 import {
   Save,
   Check,
@@ -31,7 +32,17 @@ interface AppConfig {
   }
 }
 
+interface ConfigRevision {
+  version: number
+  timestamp: string
+  label: string
+  keywords: string
+  topics: string
+  anchors: string
+}
+
 export function Ingest() {
+  const { activeProject } = useProject()
   // API Config States
   const [keywords, setKeywords] = useState('')
   const [topics, setTopics] = useState('')
@@ -49,6 +60,8 @@ export function Ingest() {
     'book-chapter': false,
     dataset: false,
   })
+  const [configHistory, setConfigHistory] = useState<ConfigRevision[]>([])
+  const [saveLabel, setSaveLabel] = useState('')
 
   // Upload States
   const [file, setFile] = useState<File | null>(null)
@@ -88,9 +101,9 @@ export function Ingest() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const fetchConfig = async () => {
+  const fetchConfig = useCallback(async () => {
     try {
-      const response = await fetch('/api/config')
+      const response = await fetch(`/api/config?project=${activeProject}`)
       if (response.ok) {
         const data = await response.json()
         const cfg = data.config
@@ -98,6 +111,7 @@ export function Ingest() {
         setKeywords(data.keywords || '')
         setTopics(data.topics || '')
         setAnchors(data.anchors || '')
+        setConfigHistory(data.history || [])
 
         if (cfg) {
           setApiKeysStr(cfg.api?.keys?.join(', ') || '')
@@ -123,13 +137,13 @@ export function Ingest() {
     } catch (err) {
       console.error('Failed to load configuration:', err)
     }
-  }
+  }, [activeProject])
 
   // Load Initial Config
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchConfig()
-  }, [])
+  }, [fetchConfig])
 
   // File Upload Handler
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -148,7 +162,7 @@ export function Ingest() {
     formData.append('file', file)
 
     try {
-      const response = await fetch('/api/upload', {
+      const response = await fetch(`/api/upload?project=${activeProject}`, {
         method: 'POST',
         body: formData,
       })
@@ -184,7 +198,7 @@ export function Ingest() {
     setExtracting(true)
 
     try {
-      const response = await fetch('/api/tfidf', {
+      const response = await fetch(`/api/tfidf?project=${activeProject}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -302,7 +316,7 @@ export function Ingest() {
     const docTypesList = Object.keys(selectedDocTypes).filter((k) => selectedDocTypes[k])
 
     try {
-      const response = await fetch('/api/openalex/count', {
+      const response = await fetch(`/api/openalex/count?project=${activeProject}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -361,7 +375,7 @@ export function Ingest() {
     }
 
     try {
-      const response = await fetch('/api/config', {
+      const response = await fetch(`/api/config?project=${activeProject}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -369,11 +383,14 @@ export function Ingest() {
           keywords,
           topics,
           anchors,
+          label: saveLabel,
         }),
       })
 
       if (response.ok) {
         setSaveSuccess(true)
+        setSaveLabel('')
+        fetchConfig()
         setTimeout(() => setSaveSuccess(false), 4000)
       } else {
         alert('Failed to save configuration')
@@ -929,12 +946,77 @@ export function Ingest() {
             </div>
           </div>
 
+          {/* Revisions History Panel */}
+          {configHistory.length > 0 && (
+            <div className="flex flex-col gap-4 border border-zinc-200 dark:border-zinc-850 p-5 rounded mt-6">
+              <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-850 pb-2">
+                <span className="text-xs font-mono font-bold uppercase tracking-wider text-zinc-500">
+                  Configuration Revisions (Source Control)
+                </span>
+                <span className="text-[10px] font-mono text-zinc-400">PROJECT HISTORY</span>
+              </div>
+              <div className="max-h-60 overflow-y-auto flex flex-col gap-2 pr-2">
+                {configHistory
+                  .slice()
+                  .reverse()
+                  .map((rev) => (
+                    <div
+                      key={rev.version}
+                      className="flex flex-col sm:flex-row sm:items-center justify-between p-3 border border-zinc-200 dark:border-zinc-850 bg-zinc-50/20 dark:bg-zinc-950/20 rounded font-mono text-xs gap-3"
+                    >
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                          <span className="px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-800 text-[10px] font-bold">
+                            v{rev.version}
+                          </span>
+                          <span className="font-semibold text-zinc-800 dark:text-zinc-200">
+                            {rev.label}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-zinc-400">
+                          Saved: {new Date(rev.timestamp).toLocaleString()}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setKeywords(rev.keywords || '')
+                          setTopics(rev.topics || '')
+                          setAnchors(rev.anchors || '')
+                          alert(
+                            `Loaded revision v${rev.version} to editor. Click "Save Configuration" to apply changes.`,
+                          )
+                        }}
+                        className="px-2.5 py-1.5 border border-zinc-350 dark:border-zinc-800 rounded bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-850 text-zinc-700 dark:text-zinc-300 font-mono text-[10px] font-bold uppercase cursor-pointer self-start sm:self-center shrink-0"
+                      >
+                        Restore to Editor
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+
           {/* Action Buttons: Save Config */}
-          <div className="flex items-center justify-end border-t border-zinc-200 dark:border-zinc-850 pt-5 mt-2">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between border-t border-zinc-200 dark:border-zinc-850 pt-5 mt-2 gap-4">
+            <div className="flex-1 flex flex-col gap-1 max-w-md">
+              <label htmlFor="save-label" className="text-[10px] font-mono uppercase text-zinc-400">
+                Revision Label / Commit Message (Optional)
+              </label>
+              <input
+                id="save-label"
+                type="text"
+                disabled={saving}
+                value={saveLabel}
+                onChange={(e) => setSaveLabel(e.target.value)}
+                placeholder="e.g. Added quantum keywords, fixed topics..."
+                className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-2 rounded font-mono text-xs focus:outline-none"
+              />
+            </div>
             <button
               type="submit"
               disabled={saving}
-              className="flex items-center gap-2 px-5 py-2.5 border rounded font-mono text-xs font-bold uppercase tracking-wider select-none transition-all cursor-pointer bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-800 hover:bg-zinc-800 dark:hover:bg-zinc-200 disabled:opacity-50"
+              className="flex items-center justify-center gap-2 px-5 py-2.5 border rounded font-mono text-xs font-bold uppercase tracking-wider select-none transition-all cursor-pointer bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-800 hover:bg-zinc-800 dark:hover:bg-zinc-200 disabled:opacity-50 self-end sm:self-center shrink-0"
             >
               {saving ? (
                 <>

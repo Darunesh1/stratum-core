@@ -1,5 +1,6 @@
 // src/routes/index.tsx
 import { useState, useEffect, useRef } from 'react'
+import { useProject } from '../context/ProjectContext'
 import {
   FileText,
   Users,
@@ -84,18 +85,28 @@ interface DashboardStats {
 }
 
 export function Index() {
+  const { activeProject } = useProject()
   const [syncing, setSyncing] = useState(false)
   const [progress, setProgress] = useState(0)
   const [logs, setLogs] = useState<string[]>([])
   const [stats, setStats] = useState<DashboardStats | null>(null)
 
+  const [prevProject, setPrevProject] = useState(activeProject)
+  if (activeProject !== prevProject) {
+    setPrevProject(activeProject)
+    setSyncing(false)
+    setProgress(0)
+    setLogs([])
+    setStats(null)
+  }
+
   const consoleBottomRef = useRef<HTMLDivElement | null>(null)
 
-  // 1. Fetch Stats on Mount
+  // 1. Fetch Stats on Mount & Project Switch
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const response = await fetch('/api/stats')
+        const response = await fetch(`/api/stats?project=${activeProject}`)
         if (response.ok) {
           const data = await response.json()
           setStats(data)
@@ -104,8 +115,24 @@ export function Index() {
         console.error('Failed to load statistics:', err)
       }
     }
+
+    const checkInitialStatus = async () => {
+      try {
+        const response = await fetch(`/api/pipeline/status?project=${activeProject}`)
+        if (response.ok) {
+          const data = await response.json()
+          setSyncing(data.syncing)
+          setProgress(data.progress)
+          setLogs(data.logs || [])
+        }
+      } catch (err) {
+        console.error('Failed to load initial status:', err)
+      }
+    }
+
     fetchStats()
-  }, [])
+    checkInitialStatus()
+  }, [activeProject])
 
   // 2. Poll Pipeline Status periodically when Syncing
   useEffect(() => {
@@ -113,7 +140,7 @@ export function Index() {
 
     const checkStatus = async () => {
       try {
-        const response = await fetch('/api/pipeline/status')
+        const response = await fetch(`/api/pipeline/status?project=${activeProject}`)
         if (response.ok) {
           const data = await response.json()
           setSyncing(data.syncing)
@@ -123,7 +150,7 @@ export function Index() {
           if (!data.syncing) {
             if (intervalId) clearInterval(intervalId)
             // Fetch updated stats after sync finishes
-            const statsResp = await fetch('/api/stats')
+            const statsResp = await fetch(`/api/stats?project=${activeProject}`)
             if (statsResp.ok) {
               const statsData = await statsResp.json()
               setStats(statsData)
@@ -144,7 +171,7 @@ export function Index() {
     return () => {
       if (intervalId) clearInterval(intervalId)
     }
-  }, [syncing])
+  }, [syncing, activeProject])
 
   useEffect(() => {
     if (consoleBottomRef.current) {
@@ -166,7 +193,7 @@ export function Index() {
     ])
 
     try {
-      const response = await fetch('/api/run-pipeline', { method: 'POST' })
+      const response = await fetch(`/api/run-pipeline?project=${activeProject}`, { method: 'POST' })
       if (!response.ok) {
         const data = await response.json()
         alert(data.error || 'Failed to start pipeline')

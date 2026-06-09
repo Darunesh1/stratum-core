@@ -1,9 +1,11 @@
 // src/routes/sql.tsx
 import { useState } from 'react'
+import { useProject } from '../context/ProjectContext'
 import { Play, Download, Database, ChevronRight, ChevronDown, Check, Loader2 } from 'lucide-react'
 import { mockSchemas, mockQueries, executeMockQuery } from '../lib/mock-stratum'
 
 export function Sql() {
+  const { activeProject } = useProject()
   const [sqlText, setSqlText] = useState(mockQueries[0].sql)
   const [expandedTable, setExpandedTable] = useState<string | null>('papers')
   const [executing, setExecuting] = useState(false)
@@ -16,7 +18,7 @@ export function Sql() {
   const handleRunQuery = async () => {
     setExecuting(true)
     try {
-      const response = await fetch('/api/query', {
+      const response = await fetch(`/api/query?project=${activeProject}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: sqlText }),
