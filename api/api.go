@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -508,6 +509,7 @@ func (s *APIServer) handleTFIDF(w http.ResponseWriter, r *http.Request) {
 		Filename       string  `json:"filename"`
 		TitleColumn    string  `json:"title_column"`
 		AbstractColumn string  `json:"abstract_column"`
+		DOIColumn      string  `json:"doi_column"`
 		TopN           int     `json:"top_n"`
 		NgramMin       int     `json:"ngram_min"`
 		NgramMax       int     `json:"ngram_max"`
@@ -561,13 +563,38 @@ func (s *APIServer) handleTFIDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Extract DOIs if DOI column is provided
+	var dois []string
+	if req.DOIColumn != "" {
+		if ext == ".csv" {
+			dois, err = extractDOIsFromCSV(filePath, req.DOIColumn)
+		} else {
+			dois, err = extractDOIsFromExcel(filePath, req.DOIColumn)
+		}
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to extract DOIs: " + err.Error()})
+			return
+		}
+
+		if len(dois) > 0 {
+			anchorData := strings.Join(dois, "\n") + "\n"
+			anchorPath := "config/anchor.txt"
+			if cfg, err := config.LoadConfig("config/collection.yml"); err == nil && cfg.Anchors != "" {
+				anchorPath = cfg.Anchors
+			}
+			os.WriteFile(anchorPath, []byte(anchorData), 0644)
+		}
+	}
+
 	keywords := tfidf.ExtractKeywords(docs, req.NgramMin, req.NgramMax, req.MinDF, req.MaxDF, req.TopN)
 	if keywords == nil {
 		keywords = []tfidf.ScoredTerm{}
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"keywords": keywords,
+		"keywords":      keywords,
+		"anchors_count": len(dois),
 	})
 }
 
@@ -738,7 +765,7 @@ func (s *APIServer) handleOpenAlexCount(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Instantiate client
-	client := openalex.NewClient(req.Keys, req.Email, 1, 1, 3, 1)
+	client := openalex.NewClient(req.Keys, req.Email, 200, 1, 3, 1)
 
 	// Build the API filter query
 	parts := []string{"title_and_abstract.search:" + req.Query}
@@ -759,7 +786,176 @@ func (s *APIServer) handleOpenAlexCount(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Load anchors from config
+	var anchors []string
+	anchorPath := "config/anchor.txt"
+	if cfg, err := config.LoadConfig("config/collection.yml"); err == nil && cfg.Anchors != "" {
+		anchorPath = cfg.Anchors
+	}
+	if data, err := os.ReadFile(anchorPath); err == nil {
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line != "" && !strings.HasPrefix(line, "#") {
+				norm := normalizeDOI(line)
+				if norm != "" {
+					anchors = append(anchors, norm)
+				}
+			}
+		}
+	}
+
+	// Run anchor check coverage
+	var matchedCount int
+	var missingDOIs []string
+	if len(anchors) > 0 {
+		batchSize := 10
+		matchedSet := make(map[string]bool)
+
+		for i := 0; i < len(anchors); i += batchSize {
+			end := i + batchSize
+			if end > len(anchors) {
+				end = len(anchors)
+			}
+			batch := anchors[i:end]
+			batchFilter := strings.Join(batch, "|")
+
+			// Combine filter: queryFilter + ",doi:" + batchFilter
+			combinedFilter := filter + ",doi:" + batchFilter
+
+			// Query OpenAlex works for matching DOIs in this batch
+			resp, err := client.FetchPage(r.Context(), combinedFilter, "*")
+			if err == nil && resp != nil {
+				for _, w := range resp.Results {
+					norm := normalizeDOI(w.DOI)
+					if norm != "" {
+						matchedSet[norm] = true
+					}
+				}
+			}
+		}
+
+		for _, doi := range anchors {
+			if matchedSet[doi] {
+				matchedCount++
+			} else {
+				missingDOIs = append(missingDOIs, doi)
+			}
+		}
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"count": count,
+		"count":           count,
+		"anchors_total":   len(anchors),
+		"anchors_matched": matchedCount,
+		"anchors_missing": missingDOIs,
 	})
+}
+
+var doiPrefixRe = regexp.MustCompile(`(?i)^(?:https?://(?:dx\.)?doi\.org/|doi:)`)
+var doiRe = regexp.MustCompile(`(?i)^10\.\d{4,9}/\S+$`)
+
+func normalizeDOI(val string) string {
+	candidate := strings.TrimSpace(val)
+	if candidate == "" {
+		return ""
+	}
+	candidate = doiPrefixRe.ReplaceAllString(candidate, "")
+	candidate = strings.TrimSpace(candidate)
+	candidate = strings.ToLower(candidate)
+	if doiRe.MatchString(candidate) {
+		return candidate
+	}
+	return ""
+}
+
+func extractDOIsFromCSV(filePath, doiCol string) ([]string, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	reader := csv.NewReader(f)
+	reader.LazyQuotes = true
+	reader.FieldsPerRecord = -1
+	rows, err := reader.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) < 2 {
+		return nil, nil
+	}
+
+	headers := rows[0]
+	doiIdx := -1
+	for idx, h := range headers {
+		if strings.EqualFold(h, doiCol) {
+			doiIdx = idx
+			break
+		}
+	}
+	if doiIdx == -1 {
+		return nil, fmt.Errorf("doi column %q not found in headers", doiCol)
+	}
+
+	var dois []string
+	seen := make(map[string]bool)
+	for _, row := range rows[1:] {
+		if doiIdx < len(row) {
+			rawDOI := strings.TrimSpace(row[doiIdx])
+			norm := normalizeDOI(rawDOI)
+			if norm != "" && !seen[norm] {
+				seen[norm] = true
+				dois = append(dois, norm)
+			}
+		}
+	}
+	return dois, nil
+}
+
+func extractDOIsFromExcel(filePath, doiCol string) ([]string, error) {
+	f, err := excelize.OpenFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	sheets := f.GetSheetList()
+	if len(sheets) == 0 {
+		return nil, fmt.Errorf("no sheets found in Excel file")
+	}
+	rows, err := f.GetRows(sheets[0])
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) < 2 {
+		return nil, nil
+	}
+
+	headers := rows[0]
+	doiIdx := -1
+	for idx, h := range headers {
+		if strings.EqualFold(h, doiCol) {
+			doiIdx = idx
+			break
+		}
+	}
+	if doiIdx == -1 {
+		return nil, fmt.Errorf("doi column %q not found in headers", doiCol)
+	}
+
+	var dois []string
+	seen := make(map[string]bool)
+	for _, row := range rows[1:] {
+		if doiIdx < len(row) {
+			rawDOI := strings.TrimSpace(row[doiIdx])
+			norm := normalizeDOI(rawDOI)
+			if norm != "" && !seen[norm] {
+				seen[norm] = true
+				dois = append(dois, norm)
+			}
+		}
+	}
+	return dois, nil
 }
