@@ -13,13 +13,28 @@ export function Sql() {
   const [exporting, setExporting] = useState(false)
   const [exportSuccess, setExportSuccess] = useState(false)
 
-  const handleRunQuery = () => {
+  const handleRunQuery = async () => {
     setExecuting(true)
-    setTimeout(() => {
-      const data = executeMockQuery(sqlText)
-      setResults(data)
+    try {
+      const response = await fetch('/api/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: sqlText }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        alert(data.error || 'Query failed')
+        setExecuting(false)
+        return
+      }
+      const rows = data as Record<string, string | number | boolean>[]
+      const columns = rows.length > 0 ? Object.keys(rows[0]) : []
+      setResults({ columns, rows })
+    } catch (err: unknown) {
+      alert('Failed to connect to database: ' + (err instanceof Error ? err.message : String(err)))
+    } finally {
       setExecuting(false)
-    }, 400) // Small mock execution delay
+    }
   }
 
   const handleExportCSV = () => {

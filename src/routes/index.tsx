@@ -76,70 +76,73 @@ function TargetRow({ name, description, metric, status, tags, icon }: TargetRowP
   )
 }
 
-const mockLogPool = [
-  'Establishing socket connection to stratum-core backend...',
-  'Authentication token confirmed.',
-  'Initializing openalex.DownloadPapers worker pool (size: 4)...',
-  'Executing OpenAlex works query using keywords_file and topics_file...',
-  'Discovered total match count: 12,450 records.',
-  'Ingesting page cursor 1, fetching works...',
-  'Parsed 200 works from page 1.',
-  'Ingesting page cursor 2, fetching works...',
-  'Parsed 200 works from page 2.',
-  'Ingesting page cursor 3, fetching works...',
-  'Parsed 200 works from page 3.',
-  'Analyzing contribution affiliation strings...',
-  'Invoking Crossref metadata lookups for missing records...',
-  'Triggering ImputeLLM worker utilizing Ollama llama3 provider...',
-  'Synchronizing records to disk at data/jsonl/collected_papers.jsonl...',
-  'Ingestion completed. 1000 works synchronized to JSONL.',
-  'Starting DB conversion. Running dbMgr.CreateSchema...',
-  'Importing collected_papers.jsonl into DuckDB dynamic schema...',
-  'Finished DuckDB load. Papers: 1000, Authors: 3200, Contributions: 4100.',
-  'Sync cycle complete. Database is stable and query-ready.',
-]
+interface DashboardStats {
+  total_papers: number
+  total_institutions: number
+  total_countries: number
+  oa_status_counts: Array<{ status: string; count: number }>
+}
 
 export function Index() {
   const [syncing, setSyncing] = useState(false)
   const [progress, setProgress] = useState(0)
   const [logs, setLogs] = useState<string[]>([])
+  const [stats, setStats] = useState<DashboardStats | null>(null)
 
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const logIndexRef = useRef(0)
   const consoleBottomRef = useRef<HTMLDivElement | null>(null)
 
+  // 1. Fetch Stats on Mount
   useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const response = await fetch('/api/stats')
+        if (response.ok) {
+          const data = await response.json()
+          setStats(data)
+        }
+      } catch (err) {
+        console.error('Failed to load statistics:', err)
+      }
+    }
+    fetchStats()
+  }, [])
+
+  // 2. Poll Pipeline Status periodically when Syncing
+  useEffect(() => {
+    let intervalId: ReturnType<typeof setInterval> | null = null
+
+    const checkStatus = async () => {
+      try {
+        const response = await fetch('/api/pipeline/status')
+        if (response.ok) {
+          const data = await response.json()
+          setSyncing(data.syncing)
+          setProgress(data.progress)
+          setLogs(data.logs || [])
+
+          if (!data.syncing) {
+            if (intervalId) clearInterval(intervalId)
+            // Fetch updated stats after sync finishes
+            const statsResp = await fetch('/api/stats')
+            if (statsResp.ok) {
+              const statsData = await statsResp.json()
+              setStats(statsData)
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Failed to poll status:', err)
+      }
+    }
+
     if (syncing) {
-      // Setup progress simulation
-      timerRef.current = setInterval(() => {
-        setProgress((prev) => {
-          if (prev >= 100) {
-            setSyncing(false)
-            if (timerRef.current) clearInterval(timerRef.current)
-            return 100
-          }
-
-          // Print logs corresponding to progress
-          const logCount = Math.floor((prev / 100) * mockLogPool.length)
-          const newLogs: string[] = []
-          while (logIndexRef.current <= logCount && logIndexRef.current < mockLogPool.length) {
-            const timestamp = new Date().toLocaleTimeString()
-            newLogs.push(`[${timestamp}] [INFO] ${mockLogPool[logIndexRef.current]}`)
-            logIndexRef.current++
-          }
-          if (newLogs.length > 0) {
-            setLogs((oldLogs) => [...oldLogs, ...newLogs])
-          }
-
-          return prev + Math.floor(Math.random() * 8) + 4
-        })
-      }, 300)
+      intervalId = setInterval(checkStatus, 1000)
     } else {
-      if (timerRef.current) clearInterval(timerRef.current)
+      if (intervalId) clearInterval(intervalId)
     }
 
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current)
+      if (intervalId) clearInterval(intervalId)
     }
   }, [syncing])
 
@@ -149,18 +152,50 @@ export function Index() {
     }
   }, [logs])
 
-  const handleSyncToggle = () => {
+  // 3. Trigger Async Ingest Pipeline
+  const handleSyncToggle = async () => {
     if (syncing) {
+      alert('Pipeline execution running in Go background thread. Waiting for completion.')
+      return
+    }
+
+    setSyncing(true)
+    setProgress(0)
+    setLogs([
+      '[' + new Date().toLocaleTimeString() + '] [INFO] Requesting pipeline sync from backend...',
+    ])
+
+    try {
+      const response = await fetch('/api/run-pipeline', { method: 'POST' })
+      if (!response.ok) {
+        const data = await response.json()
+        alert(data.error || 'Failed to start pipeline')
+        setSyncing(false)
+      }
+    } catch (err: unknown) {
+      alert('Connection failed: ' + (err instanceof Error ? err.message : String(err)))
       setSyncing(false)
-    } else {
-      setProgress(0)
-      setLogs([
-        `[${new Date().toLocaleTimeString()}] [INFO] Pipeline synchronization initiated by host.`,
-      ])
-      logIndexRef.current = 1
-      setSyncing(true)
     }
   }
+
+  // Derive metrics
+  const totalPapers = stats ? stats.total_papers : mockMetrics.totalPapers
+  const imputedInstitutions = stats ? stats.total_institutions : mockMetrics.imputedInstitutions
+
+  let oaCount = 0
+  if (stats && stats.oa_status_counts) {
+    stats.oa_status_counts.forEach((item: { status: string; count: number }) => {
+      if (item.status !== 'closed' && item.status !== 'unknown') {
+        oaCount += item.count
+      }
+    })
+  } else {
+    oaCount = mockMetrics.openAccessCount
+  }
+  const oaRatio = totalPapers > 0 ? Math.round((oaCount / totalPapers) * 100) : 0
+
+  const pendingOrCountriesLabel = stats ? 'Total Countries' : 'Pending Imputations'
+  const pendingOrCountriesVal = stats ? stats.total_countries : mockMetrics.unresolvedAffiliations
 
   return (
     <div className="flex flex-col gap-8 w-full max-w-5xl mx-auto">
@@ -185,7 +220,7 @@ export function Index() {
             <FileText className="h-4 w-4" />
           </div>
           <span className="text-2xl font-mono font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-            {mockMetrics.totalPapers.toLocaleString()}
+            {totalPapers.toLocaleString()}
           </span>
           <span className="text-[10px] text-zinc-400 font-sans">Collected from OpenAlex API</span>
         </div>
@@ -197,11 +232,11 @@ export function Index() {
             </span>
             <Globe className="h-4 w-4" />
           </div>
-          <span className="text-2xl font-mono font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-            {Math.round((mockMetrics.openAccessCount / mockMetrics.totalPapers) * 100)}%
+          <span className="text-2xl font-mono font-bold tracking-tight text-zinc-950 dark:text-zinc-50">
+            {oaRatio}%
           </span>
           <span className="text-[10px] text-zinc-400 font-sans">
-            {mockMetrics.openAccessCount.toLocaleString()} index papers
+            {oaCount.toLocaleString()} index papers
           </span>
         </div>
 
@@ -213,7 +248,7 @@ export function Index() {
             <Building2 className="h-4 w-4" />
           </div>
           <span className="text-2xl font-mono font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-            {mockMetrics.imputedInstitutions.toLocaleString()}
+            {imputedInstitutions.toLocaleString()}
           </span>
           <span className="text-[10px] text-zinc-400 font-sans">Resolved via LLM/Crossref</span>
         </div>
@@ -221,15 +256,15 @@ export function Index() {
         <div className="p-4 border border-zinc-200 bg-zinc-50/50 rounded flex flex-col gap-1.5 dark:border-zinc-850 dark:bg-zinc-900/10">
           <div className="flex items-center justify-between text-zinc-400">
             <span className="text-[10px] font-mono font-bold uppercase tracking-wider">
-              Pending Imputations
+              {pendingOrCountriesLabel}
             </span>
             <Users className="h-4 w-4" />
           </div>
           <span className="text-2xl font-mono font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-            {mockMetrics.unresolvedAffiliations.toLocaleString()}
+            {pendingOrCountriesVal.toLocaleString()}
           </span>
           <span className="text-[10px] text-zinc-400 font-sans">
-            Requires further execution cycles
+            {stats ? 'Unique countries matched' : 'Requires further execution cycles'}
           </span>
         </div>
       </div>
@@ -243,7 +278,7 @@ export function Index() {
           <TargetRow
             name="OpenAlex_Works_Download"
             description="Incoming JSONL publication items downloaded via OpenAlex API and stored locally."
-            metric="12.4K records"
+            metric="JSONL Files"
             status="STABLE"
             tags={['API', 'JSONL']}
             icon={<FileText className="h-4 w-4" />}
@@ -251,7 +286,7 @@ export function Index() {
           <TargetRow
             name="Imputed_Affiliations"
             description="Pipeline mapping unresolved affiliation strings to synthetic/ROR institution profiles."
-            metric="3.8K resolved"
+            metric="DuckDB Table"
             status={syncing ? 'ACTIVE_SYNC' : 'STABLE'}
             tags={['LLM', 'CROSSREF']}
             icon={<ShuffleIcon />}
@@ -259,7 +294,7 @@ export function Index() {
           <TargetRow
             name="DuckDB_Analytical_Schema"
             description="Integrated relational tables providing microsecond SQL query execution."
-            metric="5 tables"
+            metric="DuckDB Database"
             status="STABLE"
             tags={['SQL', 'DB']}
             icon={<Database className="h-4 w-4" />}
@@ -282,14 +317,14 @@ export function Index() {
             onClick={handleSyncToggle}
             className={`flex items-center gap-2 px-3 py-1.5 rounded font-mono text-xs select-none border transition-all ${
               syncing
-                ? 'bg-zinc-200 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-700'
-                : 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-800 dark:border-zinc-200 hover:bg-zinc-800 dark:hover:bg-zinc-200'
+                ? 'bg-zinc-200 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-700 cursor-not-allowed'
+                : 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-800 dark:border-zinc-200 hover:bg-zinc-800 dark:hover:bg-zinc-200 cursor-pointer'
             }`}
           >
             {syncing ? (
               <>
                 <Loader2 className="h-3 w-3 animate-spin" />
-                <span>Pause Sync</span>
+                <span>Syncing Pipeline...</span>
               </>
             ) : (
               <>
@@ -314,7 +349,7 @@ export function Index() {
         <div className="bg-zinc-950 text-zinc-300 p-4 h-64 overflow-y-auto font-mono text-[11px] leading-relaxed flex flex-col gap-1 border-t-0 select-text">
           {logs.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-zinc-600 select-none">
-              <span>Diagnostics Console Idle. Click "Run OpenAlex Sync" to initiate.</span>
+              <span>Diagnostics Console Idle. Click \"Run OpenAlex Sync\" to initiate.</span>
             </div>
           ) : (
             <>
