@@ -58,6 +58,7 @@ export function Ingest() {
   const [columns, setColumns] = useState<string[]>([])
   const [selectedTitleCol, setSelectedTitleCol] = useState('')
   const [selectedAbstractCol, setSelectedAbstractCol] = useState('')
+  const [selectedDoiCol, setSelectedDoiCol] = useState('')
 
   // TF-IDF Extraction States
   const [topN, setTopN] = useState(50)
@@ -76,6 +77,10 @@ export function Ingest() {
   // OpenAlex Count States
   const [checkingCount, setCheckingCount] = useState(false)
   const [openalexCount, setOpenalexCount] = useState<number | null>(null)
+  const [anchorsCount, setAnchorsCount] = useState<number | null>(null)
+  const [anchorsTotal, setAnchorsTotal] = useState<number | null>(null)
+  const [anchorsMatched, setAnchorsMatched] = useState<number | null>(null)
+  const [anchorsMissing, setAnchorsMissing] = useState<string[]>([])
 
   // Save States
   const [saving, setSaving] = useState(false)
@@ -83,44 +88,46 @@ export function Ingest() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  const fetchConfig = async () => {
+    try {
+      const response = await fetch('/api/config')
+      if (response.ok) {
+        const data = await response.json()
+        const cfg = data.config
+        setAppConfig(cfg)
+        setKeywords(data.keywords || '')
+        setTopics(data.topics || '')
+        setAnchors(data.anchors || '')
+
+        if (cfg) {
+          setApiKeysStr(cfg.api?.keys?.join(', ') || '')
+          setApiEmail(cfg.api?.email || '')
+          setDateFrom(cfg.filters?.date_from || '2003-01-01')
+          setDateTo(cfg.filters?.date_to || '2024-12-31')
+
+          const types = cfg.filters?.doc_types || []
+          const typeMap: Record<string, boolean> = {
+            article: false,
+            review: false,
+            'proceedings-article': false,
+            preprint: false,
+            'book-chapter': false,
+            dataset: false,
+          }
+          types.forEach((t: string) => {
+            typeMap[t] = true
+          })
+          setSelectedDocTypes(typeMap)
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load configuration:', err)
+    }
+  }
+
   // Load Initial Config
   useEffect(() => {
-    const fetchConfig = async () => {
-      try {
-        const response = await fetch('/api/config')
-        if (response.ok) {
-          const data = await response.json()
-          const cfg = data.config
-          setAppConfig(cfg)
-          setKeywords(data.keywords || '')
-          setTopics(data.topics || '')
-          setAnchors(data.anchors || '')
-
-          if (cfg) {
-            setApiKeysStr(cfg.api?.keys?.join(', ') || '')
-            setApiEmail(cfg.api?.email || '')
-            setDateFrom(cfg.filters?.date_from || '2003-01-01')
-            setDateTo(cfg.filters?.date_to || '2024-12-31')
-
-            const types = cfg.filters?.doc_types || []
-            const typeMap: Record<string, boolean> = {
-              article: false,
-              review: false,
-              'proceedings-article': false,
-              preprint: false,
-              'book-chapter': false,
-              dataset: false,
-            }
-            types.forEach((t: string) => {
-              typeMap[t] = true
-            })
-            setSelectedDocTypes(typeMap)
-          }
-        }
-      } catch (err) {
-        console.error('Failed to load configuration:', err)
-      }
-    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchConfig()
   }, [])
 
@@ -156,8 +163,10 @@ export function Ingest() {
         const tCol = cols.find((c: string) => /title/i.test(c)) || cols[0] || ''
         const aCol =
           cols.find((c: string) => /abstract|summary/i.test(c)) || cols[1] || cols[0] || ''
+        const dCol = cols.find((c: string) => /doi/i.test(c)) || cols[2] || cols[0] || ''
         setSelectedTitleCol(tCol)
         setSelectedAbstractCol(aCol)
+        setSelectedDoiCol(dCol)
       } else {
         const errData = await response.json()
         alert('Upload failed: ' + (errData.error || response.statusText))
@@ -182,6 +191,7 @@ export function Ingest() {
           filename: uploadedFilename,
           title_column: selectedTitleCol,
           abstract_column: selectedAbstractCol,
+          doi_column: selectedDoiCol,
           top_n: Number(topN),
           ngram_min: Number(ngramMin),
           ngram_max: Number(ngramMax),
@@ -197,6 +207,8 @@ export function Ingest() {
           selected: true,
         }))
         setExtractedKeywords(list)
+        setAnchorsCount(data.anchors_count || 0)
+        fetchConfig() // Reload config to reflect newly saved anchors in textarea
       } else {
         const errData = await response.json()
         alert('Extraction failed: ' + (errData.error || response.statusText))
@@ -275,6 +287,9 @@ export function Ingest() {
     }
     setCheckingCount(true)
     setOpenalexCount(null)
+    setAnchorsTotal(null)
+    setAnchorsMatched(null)
+    setAnchorsMissing([])
 
     const keysList = apiKeysStr
       .split(',')
@@ -304,6 +319,9 @@ export function Ingest() {
       if (response.ok) {
         const data = await response.json()
         setOpenalexCount(data.count)
+        setAnchorsTotal(data.anchors_total || 0)
+        setAnchorsMatched(data.anchors_matched || 0)
+        setAnchorsMissing(data.anchors_missing || [])
       } else {
         const errData = await response.json()
         alert('Count failed: ' + (errData.error || response.statusText))
@@ -445,7 +463,7 @@ export function Ingest() {
                 2. Configure Text Mining
               </span>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-2.5">
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] font-mono uppercase text-zinc-400">
                     Title Column
@@ -453,7 +471,7 @@ export function Ingest() {
                   <select
                     value={selectedTitleCol}
                     onChange={(e) => setSelectedTitleCol(e.target.value)}
-                    className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-1.5 rounded font-mono text-xs"
+                    className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-1.5 rounded font-mono text-xs w-full"
                   >
                     {columns.map((c) => (
                       <option key={c} value={c}>
@@ -469,7 +487,23 @@ export function Ingest() {
                   <select
                     value={selectedAbstractCol}
                     onChange={(e) => setSelectedAbstractCol(e.target.value)}
-                    className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-1.5 rounded font-mono text-xs"
+                    className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-1.5 rounded font-mono text-xs w-full"
+                  >
+                    {columns.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-mono uppercase text-zinc-400 truncate">
+                    DOI / Anchor Column
+                  </label>
+                  <select
+                    value={selectedDoiCol}
+                    onChange={(e) => setSelectedDoiCol(e.target.value)}
+                    className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-1.5 rounded font-mono text-xs w-full"
                   >
                     {columns.map((c) => (
                       <option key={c} value={c}>
@@ -521,7 +555,7 @@ export function Ingest() {
                     type="number"
                     value={topN}
                     onChange={(e) => setTopN(Number(e.target.value))}
-                    className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-1 rounded font-mono text-xs text-center"
+                    className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-850 p-1 rounded font-mono text-xs text-center"
                   />
                 </div>
               </div>
@@ -540,6 +574,11 @@ export function Ingest() {
                   <span>Extract Scored Keywords</span>
                 )}
               </button>
+              {anchorsCount !== null && anchorsCount > 0 && (
+                <span className="text-[10px] font-mono text-green-600 dark:text-green-400 flex items-center gap-1 mt-1">
+                  <Check className="h-3 w-3" /> Extracted {anchorsCount} anchor DOIs to anchor.txt.
+                </span>
+              )}
             </div>
           )}
 
@@ -782,18 +821,58 @@ export function Ingest() {
                 </p>
 
                 {/* Count badge */}
-                <div className="h-24 border border-zinc-200 dark:border-zinc-850 bg-zinc-50/50 dark:bg-zinc-900/10 rounded flex flex-col items-center justify-center gap-1 mt-2.5">
+                <div className="min-h-[6rem] py-4 px-3 border border-zinc-200 dark:border-zinc-850 bg-zinc-50/50 dark:bg-zinc-900/10 rounded flex flex-col items-center justify-center gap-1 mt-2.5">
                   {checkingCount ? (
                     <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
                   ) : openalexCount !== null ? (
-                    <>
-                      <span className="text-2xl font-mono font-bold text-zinc-950 dark:text-zinc-50">
-                        {openalexCount.toLocaleString()}
-                      </span>
-                      <span className="text-[9px] font-mono text-green-600 dark:text-green-400 uppercase tracking-widest">
-                        MATCHING PAPERS
-                      </span>
-                    </>
+                    <div className="w-full flex flex-col items-center gap-3">
+                      <div className="flex flex-col items-center justify-center gap-1">
+                        <span className="text-2xl font-mono font-bold text-zinc-950 dark:text-zinc-50">
+                          {openalexCount.toLocaleString()}
+                        </span>
+                        <span className="text-[9px] font-mono text-green-600 dark:text-green-400 uppercase tracking-widest">
+                          MATCHING PAPERS
+                        </span>
+                      </div>
+
+                      {anchorsTotal !== null && anchorsTotal > 0 && (
+                        <div className="border-t border-zinc-200 dark:border-zinc-850 pt-3 mt-1 w-full flex flex-col gap-1.5">
+                          <div className="flex justify-between items-center text-[10px] font-mono uppercase tracking-wider text-zinc-400">
+                            <span>Anchor Paper Match</span>
+                            <span className="font-bold text-zinc-700 dark:text-zinc-350">
+                              {anchorsMatched} / {anchorsTotal} (
+                              {anchorsTotal > 0
+                                ? Math.round((anchorsMatched! / anchorsTotal) * 100)
+                                : 0}
+                              %)
+                            </span>
+                          </div>
+                          <div className="w-full bg-zinc-250 dark:bg-zinc-800 h-1.5 rounded-full overflow-hidden">
+                            <div
+                              className="bg-green-500 h-full rounded-full transition-all duration-300"
+                              style={{
+                                width: `${anchorsTotal > 0 ? (anchorsMatched! / anchorsTotal) * 100 : 0}%`,
+                              }}
+                            />
+                          </div>
+                          {anchorsMissing.length > 0 && (
+                            <div className="mt-1 flex flex-col gap-1">
+                              <span className="text-[9px] font-mono text-amber-600 dark:text-amber-400 uppercase tracking-wide flex items-center gap-1 font-semibold">
+                                <AlertCircle className="h-3 w-3 shrink-0" /> Missing{' '}
+                                {anchorsMissing.length} anchors from results
+                              </span>
+                              <div className="bg-amber-50/50 dark:bg-amber-950/10 border border-amber-200/50 dark:border-amber-900/30 p-2 rounded text-[10px] font-mono text-zinc-500 dark:text-zinc-400 max-h-24 overflow-y-auto w-full text-left">
+                                {anchorsMissing.map((doi) => (
+                                  <div key={doi} className="truncate">
+                                    • {doi}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   ) : (
                     <span className="text-xs font-mono text-zinc-400 uppercase tracking-wider">
                       No Estimation Yet

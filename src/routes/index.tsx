@@ -198,7 +198,7 @@ export function Index() {
   const pendingOrCountriesVal = stats ? stats.total_countries : mockMetrics.unresolvedAffiliations
 
   return (
-    <div className="flex flex-col gap-8 w-full max-w-5xl mx-auto">
+    <div className="flex flex-col gap-8 w-full">
       {/* Header Row */}
       <div className="flex flex-col gap-1 border-b border-zinc-200 pb-5 dark:border-zinc-850">
         <h1 className="text-2xl font-mono font-bold tracking-tight text-zinc-950 dark:text-zinc-50 uppercase">
