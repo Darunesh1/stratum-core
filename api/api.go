@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"embed"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -16,6 +18,9 @@ import (
 	"stratum/config"
 	"stratum/db"
 	"stratum/openalex"
+	"stratum/tfidf"
+
+	"github.com/xuri/excelize/v2"
 )
 
 //go:embed dist/*
@@ -71,6 +76,10 @@ func (s *APIServer) RegisterRoutes() error {
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/run-pipeline", s.handleRunPipeline)
 	mux.HandleFunc("/api/pipeline/status", s.handlePipelineStatus)
+	mux.HandleFunc("/api/upload", s.handleUpload)
+	mux.HandleFunc("/api/tfidf", s.handleTFIDF)
+	mux.HandleFunc("/api/query/validate", s.handleQueryValidate)
+	mux.HandleFunc("/api/openalex/count", s.handleOpenAlexCount)
 
 	// Get sub-filesystem for frontend assets
 	subFS, err := fs.Sub(frontendFS, "dist")
@@ -379,4 +388,378 @@ func (s *APIServer) handlePipelineStatus(w http.ResponseWriter, r *http.Request)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	json.NewEncoder(w).Encode(s.status)
+}
+
+func (s *APIServer) handleUpload(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error": "Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Limit upload size to 10MB
+	r.ParseMultipartForm(10 << 20)
+
+	file, handler, err := r.FormFile("file")
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to retrieve file from form: " + err.Error()})
+		return
+	}
+	defer file.Close()
+
+	ext := strings.ToLower(filepath.Ext(handler.Filename))
+	if ext != ".csv" && ext != ".xlsx" && ext != ".xls" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Unsupported file format. Please upload a .csv, .xlsx, or .xls file."})
+		return
+	}
+
+	uploadDir := "data/uploads"
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to create uploads directory: " + err.Error()})
+		return
+	}
+
+	// Save file to disk
+	safeName := fmt.Sprintf("upload_%d%s", time.Now().UnixNano(), ext)
+	filePath := filepath.Join(uploadDir, safeName)
+	dst, err := os.Create(filePath)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to create destination file: " + err.Error()})
+		return
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, file); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to write file to disk: " + err.Error()})
+		return
+	}
+
+	// Extract headers
+	var headers []string
+	if ext == ".csv" {
+		headers, err = parseCSVHeaders(filePath)
+	} else {
+		headers, err = parseExcelHeaders(filePath)
+	}
+
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to parse file headers: " + err.Error()})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"filename": safeName,
+		"columns":  headers,
+	})
+}
+
+func parseCSVHeaders(filePath string) ([]string, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	reader := csv.NewReader(f)
+	reader.LazyQuotes = true
+	reader.FieldsPerRecord = -1
+	headers, err := reader.Read()
+	if err != nil {
+		return nil, err
+	}
+	return headers, nil
+}
+
+func parseExcelHeaders(filePath string) ([]string, error) {
+	f, err := excelize.OpenFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	sheets := f.GetSheetList()
+	if len(sheets) == 0 {
+		return nil, fmt.Errorf("no sheets found in Excel file")
+	}
+	rows, err := f.GetRows(sheets[0])
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("empty sheet")
+	}
+	return rows[0], nil
+}
+
+func (s *APIServer) handleTFIDF(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error": "Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Filename       string  `json:"filename"`
+		TitleColumn    string  `json:"title_column"`
+		AbstractColumn string  `json:"abstract_column"`
+		TopN           int     `json:"top_n"`
+		NgramMin       int     `json:"ngram_min"`
+		NgramMax       int     `json:"ngram_max"`
+		MinDF          int     `json:"min_df"`
+		MaxDF          float64 `json:"max_df"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body: " + err.Error()})
+		return
+	}
+
+	if req.Filename == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "filename parameter is required"})
+		return
+	}
+
+	// Apply defaults if empty
+	if req.TopN <= 0 {
+		req.TopN = 50
+	}
+	if req.NgramMin <= 0 {
+		req.NgramMin = 2
+	}
+	if req.NgramMax <= 0 {
+		req.NgramMax = 3
+	}
+	if req.MinDF <= 0 {
+		req.MinDF = 2
+	}
+	if req.MaxDF <= 0.0 {
+		req.MaxDF = 0.85
+	}
+
+	filePath := filepath.Join("data/uploads", req.Filename)
+	ext := strings.ToLower(filepath.Ext(filePath))
+
+	var docs []string
+	var err error
+	if ext == ".csv" {
+		docs, err = loadCSVDocuments(filePath, req.TitleColumn, req.AbstractColumn)
+	} else {
+		docs, err = loadExcelDocuments(filePath, req.TitleColumn, req.AbstractColumn)
+	}
+
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to extract documents: " + err.Error()})
+		return
+	}
+
+	keywords := tfidf.ExtractKeywords(docs, req.NgramMin, req.NgramMax, req.MinDF, req.MaxDF, req.TopN)
+	if keywords == nil {
+		keywords = []tfidf.ScoredTerm{}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"keywords": keywords,
+	})
+}
+
+func loadCSVDocuments(filePath, titleCol, abstractCol string) ([]string, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	reader := csv.NewReader(f)
+	reader.LazyQuotes = true
+	reader.FieldsPerRecord = -1
+	rows, err := reader.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) < 2 {
+		return nil, fmt.Errorf("empty file or no data rows")
+	}
+
+	headers := rows[0]
+	titleIdx, abstractIdx := -1, -1
+	for idx, h := range headers {
+		if strings.EqualFold(h, titleCol) {
+			titleIdx = idx
+		}
+		if strings.EqualFold(h, abstractCol) {
+			abstractIdx = idx
+		}
+	}
+
+	if titleIdx == -1 && abstractIdx == -1 {
+		return nil, fmt.Errorf("neither title column %q nor abstract column %q was found in headers", titleCol, abstractCol)
+	}
+
+	var docs []string
+	for _, row := range rows[1:] {
+		var title, abstract string
+		if titleIdx != -1 && titleIdx < len(row) {
+			title = strings.TrimSpace(row[titleIdx])
+		}
+		if abstractIdx != -1 && abstractIdx < len(row) {
+			abstract = strings.TrimSpace(row[abstractIdx])
+		}
+		combined := strings.TrimSpace(title + ". " + abstract)
+		if len(combined) >= 20 {
+			docs = append(docs, combined)
+		}
+	}
+	return docs, nil
+}
+
+func loadExcelDocuments(filePath, titleCol, abstractCol string) ([]string, error) {
+	f, err := excelize.OpenFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	sheets := f.GetSheetList()
+	if len(sheets) == 0 {
+		return nil, fmt.Errorf("no sheets found in Excel file")
+	}
+	rows, err := f.GetRows(sheets[0])
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) < 2 {
+		return nil, fmt.Errorf("empty sheet or no data rows")
+	}
+
+	headers := rows[0]
+	titleIdx, abstractIdx := -1, -1
+	for idx, h := range headers {
+		if strings.EqualFold(h, titleCol) {
+			titleIdx = idx
+		}
+		if strings.EqualFold(h, abstractCol) {
+			abstractIdx = idx
+		}
+	}
+
+	if titleIdx == -1 && abstractIdx == -1 {
+		return nil, fmt.Errorf("neither title column %q nor abstract column %q was found in headers", titleCol, abstractCol)
+	}
+
+	var docs []string
+	for _, row := range rows[1:] {
+		var title, abstract string
+		if titleIdx != -1 && titleIdx < len(row) {
+			title = strings.TrimSpace(row[titleIdx])
+		}
+		if abstractIdx != -1 && abstractIdx < len(row) {
+			abstract = strings.TrimSpace(row[abstractIdx])
+		}
+		combined := strings.TrimSpace(title + ". " + abstract)
+		if len(combined) >= 20 {
+			docs = append(docs, combined)
+		}
+	}
+	return docs, nil
+}
+
+func (s *APIServer) handleQueryValidate(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error": "Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Query string `json:"query"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body: " + err.Error()})
+		return
+	}
+
+	errors := openalex.ValidateKeywords(req.Query)
+	if len(errors) > 0 {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"valid":  false,
+			"errors": errors,
+		})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"valid":  true,
+		"errors": []string{},
+	})
+}
+
+func (s *APIServer) handleOpenAlexCount(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error": "Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Query    string   `json:"query"`
+		Keys     []string `json:"keys"`
+		Email    string   `json:"email"`
+		DateFrom string   `json:"date_from"`
+		DateTo   string   `json:"date_to"`
+		DocTypes []string `json:"doc_types"`
+		Topics   []string `json:"topics"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body: " + err.Error()})
+		return
+	}
+
+	if req.Email == "" {
+		req.Email = "your@email.com"
+	}
+	if req.DateFrom == "" {
+		req.DateFrom = "2003-01-01"
+	}
+	if req.DateTo == "" {
+		req.DateTo = "2024-12-31"
+	}
+
+	// Instantiate client
+	client := openalex.NewClient(req.Keys, req.Email, 1, 1, 3, 1)
+
+	// Build the API filter query
+	parts := []string{"title_and_abstract.search:" + req.Query}
+	if len(req.Topics) > 0 {
+		parts = append(parts, "primary_topic.id:"+strings.Join(req.Topics, "|"))
+	}
+	parts = append(parts, "from_publication_date:"+req.DateFrom)
+	parts = append(parts, "to_publication_date:"+req.DateTo)
+	if len(req.DocTypes) > 0 {
+		parts = append(parts, "type:"+strings.Join(req.DocTypes, "|"))
+	}
+	filter := strings.Join(parts, ",")
+
+	count, err := client.GetTotalCount(r.Context(), filter)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "OpenAlex request failed: " + err.Error()})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"count": count,
+	})
 }
