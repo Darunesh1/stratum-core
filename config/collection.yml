@@ -1,0 +1,28 @@
+api:
+  key: 28leglCF5hY0mVmVYXSNNm
+  groq_key: YOUR_GROQ_KEY_HERE
+  email: sathyarajasekar5873@gmail.com
+  base_url: https://api.openalex.org/works
+filters:
+  date_from: '2003-01-01'
+  date_to: '2024-12-31'
+  doc_types:
+  - article
+  - review
+  - proceedings-article
+keywords_file: config/keywords.txt
+topics_file: config/topics.txt
+anchor_file: config/anchor.txt
+collection:
+  batch_size_topics: 10
+  per_page: 200
+  concurrent_requests: 10
+  max_retries: 5
+  retry_delay: 2
+llm:
+  provider: ollama
+  model: sorc/qwen3.5-instruct:2b
+  base_url: http://localhost:11434
+output:
+  jsonl_dir: data/raw/
+  db_dir: data/db/
