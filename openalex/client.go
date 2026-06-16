@@ -443,10 +443,7 @@ func buildFilter(keywords string, topics []string, dateFrom string, dateTo strin
 // DownloadPapers initiates concurrent download tasks and writes matching works to a JSONL file.
 // It supports resuming from a cursor progress file.
 func (c *OpenAlexClient) DownloadPapers(ctx context.Context, cfg *config.AppConfig, outputJSONL string, progressChan chan<- int) error {
-	keywords, err := config.GetKeywords(cfg.Keywords)
-	if err != nil {
-		return err
-	}
+	keywords := cfg.Keywords
 
 	errors := ValidateKeywords(keywords)
 	if len(errors) > 0 {
@@ -454,14 +451,9 @@ func (c *OpenAlexClient) DownloadPapers(ctx context.Context, cfg *config.AppConf
 	}
 
 	var topics []string
-	if cfg.Topics != "" {
-		t, err := config.GetTopics(cfg.Topics)
-		if err == nil {
-			for _, tp := range t {
-				if ValidateTopicFormat(tp) {
-					topics = append(topics, tp)
-				}
-			}
+	for _, tp := range cfg.Topics {
+		if ValidateTopicFormat(tp) {
+			topics = append(topics, tp)
 		}
 	}
 
@@ -693,7 +685,7 @@ func (c *OpenAlexClient) processBatch(
 	return nil
 }
 
-// ValidateKeywords verifies basic parenthesis and keyword syntax constraints.
+// ValidateKeywords verifies strict parenthesis, quotes, operators, and safety constraints on search strings.
 func ValidateKeywords(keywords string) []string {
 	var errors []string
 	q := strings.TrimSpace(keywords)
@@ -703,32 +695,71 @@ func ValidateKeywords(keywords string) []string {
 		return errors
 	}
 
+	// 1. Parentheses balance
 	openCount := strings.Count(q, "(")
 	closeCount := strings.Count(q, ")")
 	if openCount != closeCount {
 		errors = append(errors, fmt.Sprintf("Unbalanced parentheses: %d open, %d close.", openCount, closeCount))
 	}
 
+	// 2. Quotes balance
 	quoteCount := strings.Count(q, "\"")
 	if quoteCount%2 != 0 {
 		errors = append(errors, "Odd number of double quotes — every \" must have a closing \".")
 	}
 
+	// 3. Lowercase operator checks (only outside quotes)
 	reQuotes := regexp.MustCompile(`"[^"]*"`)
 	qNoQuotes := reQuotes.ReplaceAllString(q, "")
-
 	reLowerOps := regexp.MustCompile(`\b(and|or|not)\b`)
 	if reLowerOps.MatchString(qNoQuotes) {
 		errors = append(errors, "Operators must be uppercase: use OR, AND, NOT.")
 	}
 
+	// 4. Adjacent operators
 	reAdjOps := regexp.MustCompile(`\b(AND|OR)\s+(AND|OR)\b|\bNOT\s+NOT\b`)
 	if reAdjOps.MatchString(q) {
 		errors = append(errors, "Adjacent operators found (e.g. 'OR OR') — check query.")
 	}
 
+	// 5. Empty elements
 	if strings.Contains(q, "()") {
 		errors = append(errors, "Empty parentheses () found.")
+	}
+	if strings.Contains(q, `""`) {
+		errors = append(errors, "Empty double quotes \"\" found.")
+	}
+	reEmptyQuotes := regexp.MustCompile(`"\s+"`)
+	if reEmptyQuotes.MatchString(q) {
+		errors = append(errors, "Empty double quotes with whitespace found.")
+	}
+
+	// 6. Start / End check
+	trimmed := strings.TrimSpace(q)
+	words := strings.Fields(trimmed)
+	if len(words) > 0 {
+		firstWord := strings.Trim(words[0], "()")
+		lastWord := strings.Trim(words[len(words)-1], "()")
+		if firstWord == "AND" || firstWord == "OR" {
+			errors = append(errors, "Query cannot start with binary operator AND or OR.")
+		}
+		if lastWord == "AND" || lastWord == "OR" || lastWord == "NOT" {
+			errors = append(errors, "Query cannot end with an operator (AND, OR, NOT).")
+		}
+	}
+
+	// 7. Dangling operators next to parentheses
+	reDanglingParen := regexp.MustCompile(`\(\s*(AND|OR)\b|\b(AND|OR|NOT)\s*\)`)
+	if reDanglingParen.MatchString(q) {
+		errors = append(errors, "Dangling operators inside parentheses (e.g. '(AND term)' or '(term OR)').")
+	}
+
+	// 8. Safety check for injection characters
+	invalidChars := []string{";", "'", "`", "\\", "<", ">"}
+	for _, char := range invalidChars {
+		if strings.Contains(q, char) {
+			errors = append(errors, fmt.Sprintf("Query contains invalid character: %q.", char))
+		}
 	}
 
 	return errors

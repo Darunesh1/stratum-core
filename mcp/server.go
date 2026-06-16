@@ -131,7 +131,7 @@ func (s *MCPServer) Start(ctx context.Context) error {
 func (s *MCPServer) handleValidate(ctx context.Context, req *mcp.CallToolRequest, args ValidateArgs) (*mcp.CallToolResult, ValidateResult, error) {
 	configPath := args.ConfigPath
 	if configPath == "" {
-		configPath = "config/collection.yml"
+		configPath = "data/db/config.db"
 	}
 
 	cfg, err := config.LoadConfig(configPath)
@@ -148,19 +148,15 @@ func (s *MCPServer) handleValidate(ctx context.Context, req *mcp.CallToolRequest
 	var errors []string
 
 	// 1. Validate keywords
-	keywords, err := config.GetKeywords(cfg.Keywords)
-	if err != nil {
-		errors = append(errors, "failed to read keywords: "+err.Error())
-	} else if keywords != "" {
+	keywords := cfg.Keywords
+	if keywords != "" {
 		kwErrs := openalex.ValidateKeywords(keywords)
 		errors = append(errors, kwErrs...)
 	}
 
 	// 2. Validate topics
-	topics, err := config.GetTopics(cfg.Topics)
-	if err != nil {
-		errors = append(errors, "failed to read topics: "+err.Error())
-	} else if len(topics) > 0 {
+	topics := cfg.Topics
+	if len(topics) > 0 {
 		var validTopics []string
 		for _, topic := range topics {
 			if !openalex.ValidateTopicFormat(topic) {
@@ -202,7 +198,7 @@ func (s *MCPServer) handleValidate(ctx context.Context, req *mcp.CallToolRequest
 func (s *MCPServer) handleSearch(ctx context.Context, req *mcp.CallToolRequest, args SearchArgs) (*mcp.CallToolResult, SearchResult, error) {
 	configPath := args.ConfigPath
 	if configPath == "" {
-		configPath = "config/collection.yml"
+		configPath = "data/db/config.db"
 	}
 
 	cfg, err := config.LoadConfig(configPath)
@@ -216,27 +212,8 @@ func (s *MCPServer) handleSearch(ctx context.Context, req *mcp.CallToolRequest, 
 		}, SearchResult{TotalCount: 0}, nil
 	}
 
-	keywords, err := config.GetKeywords(cfg.Keywords)
-	if err != nil {
-		errStr := "failed to read keywords: " + err.Error()
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: errStr},
-			},
-			IsError: true,
-		}, SearchResult{TotalCount: 0}, nil
-	}
-
-	topics, err := config.GetTopics(cfg.Topics)
-	if err != nil {
-		errStr := "failed to read topics: " + err.Error()
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: errStr},
-			},
-			IsError: true,
-		}, SearchResult{TotalCount: 0}, nil
-	}
+	keywords := cfg.Keywords
+	topics := cfg.Topics
 
 	client := openalex.NewClient(cfg.API.Keys, cfg.API.Email, cfg.Collection.PerPage, cfg.Collection.ConcurrentRequests, cfg.Collection.MaxRetries, cfg.Collection.RetryDelay)
 
@@ -282,7 +259,7 @@ func (s *MCPServer) handleSearch(ctx context.Context, req *mcp.CallToolRequest, 
 func (s *MCPServer) handleDownload(ctx context.Context, req *mcp.CallToolRequest, args DownloadArgs) (*mcp.CallToolResult, DownloadResult, error) {
 	configPath := args.ConfigPath
 	if configPath == "" {
-		configPath = "config/collection.yml"
+		configPath = "data/db/config.db"
 	}
 
 	cfg, err := config.LoadConfig(configPath)
@@ -354,7 +331,7 @@ func (s *MCPServer) handleDownload(ctx context.Context, req *mcp.CallToolRequest
 func (s *MCPServer) handleConvertDB(ctx context.Context, req *mcp.CallToolRequest, args ConvertDBArgs) (*mcp.CallToolResult, ConvertDBResult, error) {
 	configPath := args.ConfigPath
 	if configPath == "" {
-		configPath = "config/collection.yml"
+		configPath = "data/db/config.db"
 	}
 
 	cfg, err := config.LoadConfig(configPath)
@@ -444,7 +421,7 @@ func (s *MCPServer) handleConvertDB(ctx context.Context, req *mcp.CallToolReques
 func (s *MCPServer) handleImpute(ctx context.Context, req *mcp.CallToolRequest, args ImputeArgs) (*mcp.CallToolResult, ImputeResult, error) {
 	configPath := args.ConfigPath
 	if configPath == "" {
-		configPath = "config/collection.yml"
+		configPath = "data/db/config.db"
 	}
 
 	cfg, err := config.LoadConfig(configPath)

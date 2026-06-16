@@ -22,23 +22,15 @@ import (
 // Helper to setup a test directory structure and config files
 func setupTestEnv(t *testing.T) (string, func()) {
 	// Create temporary directories
-	err := os.MkdirAll("config", 0755)
-	if err != nil {
-		t.Fatalf("failed to create config dir: %v", err)
-	}
-	err = os.MkdirAll("data/jsonl", 0755)
-	if err != nil {
-		t.Fatalf("failed to create data dir: %v", err)
-	}
+	_ = os.MkdirAll("config", 0755)
+	_ = os.MkdirAll("data/jsonl", 0755)
+	_ = os.MkdirAll("data/uploads", 0755)
 
-	// Create a temporary database file
-	tmpFile, err := os.CreateTemp("", "stratum_test_*.db")
+	tmpDir, err := os.MkdirTemp("", "stratum_test_dir_*")
 	if err != nil {
-		t.Fatalf("failed to create temp file: %v", err)
+		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	dbPath := tmpFile.Name()
-	tmpFile.Close()
-	os.Remove(dbPath) // Let DuckDB initialize it
+	dbPath := filepath.Join(tmpDir, "papers.db")
 
 	// Write default YAML config
 	cfgContent := fmt.Sprintf(`api:
@@ -62,7 +54,7 @@ output:
 keywords_file: "config/keywords.txt"
 topics_file: "config/topics.txt"
 anchor_file: "config/anchor.txt"
-`, filepath.Dir(dbPath))
+`, tmpDir)
 
 	err = os.WriteFile("config/collection.yml", []byte(cfgContent), 0644)
 	if err != nil {
@@ -91,9 +83,7 @@ anchor_file: "config/anchor.txt"
 		os.Remove("config/anchor.txt")
 		os.RemoveAll("config")
 		os.RemoveAll("data")
-		os.Remove(dbPath)
-		os.Remove(dbPath + ".tmp")
-		os.Remove(dbPath + ".wal")
+		os.RemoveAll(tmpDir)
 	}
 
 	return dbPath, cleanup
@@ -269,7 +259,8 @@ func TestConfigRoute(t *testing.T) {
 	}
 
 	// 2. Test POST config
-	cfg, err := config.LoadConfig("config/collection.yml")
+	configDBPath := filepath.Join(filepath.Dir(dbPath), "config.db")
+	cfg, err := config.LoadConfig(configDBPath)
 	if err != nil {
 		t.Fatalf("failed to load config: %v", err)
 	}
@@ -289,10 +280,13 @@ func TestConfigRoute(t *testing.T) {
 		t.Errorf("expected POST status 200, got %d", wPost.Code)
 	}
 
-	// Check if file content updated
-	kData, _ := os.ReadFile("config/keywords.txt")
-	if string(kData) != "(\"neural networks\")" {
-		t.Errorf("expected keywords updated to '(\"neural networks\")', got %q", string(kData))
+	// Check if DB config updated
+	loaded, err := config.LoadConfig(configDBPath)
+	if err != nil {
+		t.Fatalf("failed to load updated config: %v", err)
+	}
+	if loaded.Keywords != "(\"neural networks\")" {
+		t.Errorf("expected keywords updated to '(\"neural networks\")', got %q", loaded.Keywords)
 	}
 }
 

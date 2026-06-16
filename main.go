@@ -17,7 +17,7 @@ import (
 func main() {
 	serveMode := flag.Bool("serve", false, "Start the web HTTP API server and dashboard")
 	port := flag.Int("port", 8080, "Port to run the HTTP server on")
-	dbPath := flag.String("db", "data/db/quantum_papers.duckdb", "Path to the DuckDB database file")
+	dbPath := flag.String("db", "data/db/papers.db", "Path to the DuckDB database file")
 	flag.Parse()
 
 	ctx := context.Background()

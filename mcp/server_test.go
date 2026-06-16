@@ -8,13 +8,7 @@ import (
 )
 
 func TestMCPServerTools(t *testing.T) {
-	// Initialize the MCP server
-	server := NewMCPServer("test-mcp-server", "1.0.0")
-	if server == nil {
-		t.Fatalf("expected NewMCPServer to return a non-nil server")
-	}
-
-	// Register tools
+	server := NewMCPServer("test-mcp", "1.0.0")
 	err := server.RegisterTools()
 	if err != nil {
 		t.Fatalf("expected RegisterTools to pass, got error: %v", err)
@@ -28,8 +22,6 @@ func TestMCPServerTools(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	configPath := filepath.Join(tempDir, "collection.yml")
-	keywordsPath := filepath.Join(tempDir, "keywords.txt")
-	topicsPath := filepath.Join(tempDir, "topics.txt")
 
 	configData := []byte(`
 api:
@@ -39,19 +31,12 @@ filters:
   date_from: "2020-01-01"
   date_to: "2020-12-31"
   doc_types: ["article"]
-keywords_file: ` + keywordsPath + `
-topics_file: ` + topicsPath + `
+keywords: "quantum AND computing"
+topics:
+  - "T12345"
 `)
 	if err := os.WriteFile(configPath, configData, 0644); err != nil {
 		t.Fatalf("failed to write config file: %v", err)
-	}
-
-	if err := os.WriteFile(keywordsPath, []byte("quantum computing"), 0644); err != nil {
-		t.Fatalf("failed to write keywords file: %v", err)
-	}
-
-	if err := os.WriteFile(topicsPath, []byte("T12345"), 0644); err != nil {
-		t.Fatalf("failed to write topics file: %v", err)
 	}
 
 	ctx := context.Background()

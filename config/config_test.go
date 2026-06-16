@@ -6,13 +6,19 @@ import (
 	"testing"
 )
 
-func TestLoadConfig(t *testing.T) {
+func TestLoadConfigYAML(t *testing.T) {
 	// Create temporary directory for test files
 	tmpDir, err := os.MkdirTemp("", "stratum_config_test_*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
+
+	// Create legacy mock txt files
+	_ = os.MkdirAll(filepath.Join(tmpDir, "config"), 0755)
+	_ = os.WriteFile(filepath.Join(tmpDir, "config", "keywords.txt"), []byte("(quantum AND computing)"), 0644)
+	_ = os.WriteFile(filepath.Join(tmpDir, "config", "topics.txt"), []byte("T10020\nT10682"), 0644)
+	_ = os.WriteFile(filepath.Join(tmpDir, "config", "anchor.txt"), []byte("10.1038/nphys1170"), 0644)
 
 	yamlContent := `
 api:
@@ -27,9 +33,9 @@ filters:
   date_to: "2024-01-01"
   doc_types:
     - "article"
-keywords_file: "config/keywords.txt"
-topics_file: "config/topics.txt"
-anchor_file: "config/anchor.txt"
+keywords_file: "` + filepath.Join(tmpDir, "config", "keywords.txt") + `"
+topics_file: "` + filepath.Join(tmpDir, "config", "topics.txt") + `"
+anchor_file: "` + filepath.Join(tmpDir, "config", "anchor.txt") + `"
 collection:
   batch_size_topics: 5
   per_page: 100
@@ -69,23 +75,25 @@ output:
 	if cfg.LLM.Model != "qwen-test" {
 		t.Errorf("expected LLM model 'qwen-test', got '%s'", cfg.LLM.Model)
 	}
-	if cfg.Output.DBDir != "data/db/" {
-		t.Errorf("expected DBDir 'data/db/', got '%s'", cfg.Output.DBDir)
+	if cfg.Keywords != "(quantum AND computing)" {
+		t.Errorf("expected resolved keywords '(quantum AND computing)', got '%s'", cfg.Keywords)
 	}
-
-	// Test loading non-existent file returns error
-	_, err = LoadConfig(filepath.Join(tmpDir, "doesnotexist.yml"))
-	if err == nil {
-		t.Error("expected error loading non-existent file, got nil")
+	if len(cfg.Topics) != 2 || cfg.Topics[0] != "T10020" {
+		t.Errorf("unexpected resolved topics: %v", cfg.Topics)
+	}
+	if len(cfg.Anchors) != 1 || cfg.Anchors[0] != "10.1038/nphys1170" {
+		t.Errorf("unexpected resolved anchors: %v", cfg.Anchors)
 	}
 }
 
-func TestSaveConfig(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "stratum_config_save_test_*")
+func TestSaveAndLoadDBConfig(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "stratum_config_db_test_*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "config.db")
 
 	cfg := &AppConfig{
 		API: APIConfig{
@@ -99,9 +107,9 @@ func TestSaveConfig(t *testing.T) {
 			DateTo:   "2023-12-31",
 			DocTypes: []string{"proceedings"},
 		},
-		Keywords: "kw.txt",
-		Topics:   "tp.txt",
-		Anchors:  "ac.txt",
+		Keywords: "(ai AND computing)",
+		Topics:   []string{"T10001", "T10002"},
+		Anchors:  []string{"10.1234/test"},
 		Collection: CollectionConfig{
 			BatchSizeTopics:    10,
 			PerPage:            200,
@@ -114,21 +122,15 @@ func TestSaveConfig(t *testing.T) {
 			Model:    "llama-save",
 			BaseURL:  "https://api.groq.com",
 		},
-		Output: OutputConfig{
-			JSONLDir: "raw/",
-			DBDir:    "db/",
-		},
 	}
 
-	configPath := filepath.Join(tmpDir, "saved.yml")
-	if err := SaveConfig(configPath, cfg); err != nil {
-		t.Fatalf("SaveConfig failed: %v", err)
+	if err := SaveConfig(dbPath, cfg); err != nil {
+		t.Fatalf("SaveConfig to DB failed: %v", err)
 	}
 
-	// Load back and assert
-	loaded, err := LoadConfig(configPath)
+	loaded, err := LoadConfig(dbPath)
 	if err != nil {
-		t.Fatalf("failed to load saved config: %v", err)
+		t.Fatalf("LoadConfig from DB failed: %v", err)
 	}
 
 	if loaded.API.Email != "save@test.com" {
@@ -137,129 +139,19 @@ func TestSaveConfig(t *testing.T) {
 	if len(loaded.API.Keys) != 1 || loaded.API.Keys[0] != "savekey" {
 		t.Errorf("unexpected keys: %v", loaded.API.Keys)
 	}
-	if loaded.Filters.DateFrom != "2019-12-31" {
-		t.Errorf("expected date_from '2019-12-31', got '%s'", loaded.Filters.DateFrom)
+	if loaded.Keywords != "(ai AND computing)" {
+		t.Errorf("unexpected keywords: %s", loaded.Keywords)
+	}
+	if len(loaded.Topics) != 2 || loaded.Topics[0] != "T10001" {
+		t.Errorf("unexpected topics: %v", loaded.Topics)
+	}
+	if len(loaded.Anchors) != 1 || loaded.Anchors[0] != "10.1234/test" {
+		t.Errorf("unexpected anchors: %v", loaded.Anchors)
 	}
 	if loaded.Collection.PerPage != 200 {
 		t.Errorf("expected PerPage 200, got %d", loaded.Collection.PerPage)
 	}
 	if loaded.LLM.Model != "llama-save" {
 		t.Errorf("expected LLM model 'llama-save', got '%s'", loaded.LLM.Model)
-	}
-}
-
-func TestGetKeywords(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "stratum_config_keywords_test_*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	rawKeywords := `
-(
-  ("quantum computing" OR "quantum computation")
-  AND
-  ("qubit" OR "quantum gate")
-)
-`
-	filePath := filepath.Join(tmpDir, "keywords.txt")
-	if err := os.WriteFile(filePath, []byte(rawKeywords), 0644); err != nil {
-		t.Fatalf("failed to write keywords file: %v", err)
-	}
-
-	cleaned, err := GetKeywords(filePath)
-	if err != nil {
-		t.Fatalf("GetKeywords failed: %v", err)
-	}
-
-	expected := `( ("quantum computing" OR "quantum computation") AND ("qubit" OR "quantum gate") )`
-	if cleaned != expected {
-		t.Errorf("expected '%s', got '%s'", expected, cleaned)
-	}
-
-	// Test non-existent file
-	_, err = GetKeywords(filepath.Join(tmpDir, "nonexistent_keywords.txt"))
-	if err == nil {
-		t.Error("expected error for non-existent keywords file, got nil")
-	}
-}
-
-func TestGetTopics(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "stratum_config_topics_test_*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	topicsContent := `
-# Active topics for Quantum Sensing and Metrology
-T10020
-T10682
-  # Indented comment
-  T12345
-`
-	filePath := filepath.Join(tmpDir, "topics.txt")
-	if err := os.WriteFile(filePath, []byte(topicsContent), 0644); err != nil {
-		t.Fatalf("failed to write topics file: %v", err)
-	}
-
-	topics, err := GetTopics(filePath)
-	if err != nil {
-		t.Fatalf("GetTopics failed: %v", err)
-	}
-
-	if len(topics) != 3 {
-		t.Errorf("expected 3 topics, got %d", len(topics))
-	}
-	expected := []string{"T10020", "T10682", "T12345"}
-	for i, v := range topics {
-		if v != expected[i] {
-			t.Errorf("expected topics[%d] to be '%s', got '%s'", i, expected[i], v)
-		}
-	}
-
-	// Test non-existent file returns error
-	_, err = GetTopics(filepath.Join(tmpDir, "nonexistent_topics.txt"))
-	if err == nil {
-		t.Error("expected error for non-existent topics file, got nil")
-	}
-}
-
-func TestGetAnchors(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "stratum_config_anchors_test_*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	anchorsContent := `
-# Anchor papers DOI/titles
-10.1038/nphys1170
-Quantum supremacy using a programmable superconducting processor
-`
-	filePath := filepath.Join(tmpDir, "anchor.txt")
-	if err := os.WriteFile(filePath, []byte(anchorsContent), 0644); err != nil {
-		t.Fatalf("failed to write anchors file: %v", err)
-	}
-
-	anchors, err := GetAnchors(filePath)
-	if err != nil {
-		t.Fatalf("GetAnchors failed: %v", err)
-	}
-
-	if len(anchors) != 2 {
-		t.Errorf("expected 2 anchors, got %d", len(anchors))
-	}
-	expected := []string{"10.1038/nphys1170", "Quantum supremacy using a programmable superconducting processor"}
-	for i, v := range anchors {
-		if v != expected[i] {
-			t.Errorf("expected anchors[%d] to be '%s', got '%s'", i, expected[i], v)
-		}
-	}
-
-	// Test non-existent file returns error
-	_, err = GetAnchors(filepath.Join(tmpDir, "nonexistent_anchors.txt"))
-	if err == nil {
-		t.Error("expected error for non-existent anchors file, got nil")
 	}
 }

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 	"encoding/csv"
 	"encoding/json"
@@ -50,6 +51,7 @@ type APIServer struct {
 	addr             string
 	dbPath           string
 	dbManagers       map[string]*db.DBManager
+	configDBs        map[string]*sql.DB
 	pipelineStatuses map[string]*PipelineStatus
 	projectMutexes   map[string]*sync.Mutex
 	server           *http.Server
@@ -62,6 +64,7 @@ func NewAPIServer(addr string, dbPath string) *APIServer {
 		addr:             addr,
 		dbPath:           dbPath,
 		dbManagers:       make(map[string]*db.DBManager),
+		configDBs:        make(map[string]*sql.DB),
 		pipelineStatuses: make(map[string]*PipelineStatus),
 		projectMutexes:   make(map[string]*sync.Mutex),
 	}
@@ -173,6 +176,9 @@ func (s *APIServer) Stop(ctx context.Context) error {
 	for _, mgr := range s.dbManagers {
 		mgr.Close()
 	}
+	for _, dbConn := range s.configDBs {
+		dbConn.Close()
+	}
 	if s.server != nil {
 		return s.server.Shutdown(ctx)
 	}
@@ -184,37 +190,173 @@ func sanitizeProjectName(name string) string {
 	return reg.ReplaceAllString(name, "")
 }
 
-func (s *APIServer) getProjectPaths(project string) (ymlPath, keywordsPath, topicsPath, anchorsPath, dbPath, jsonlDir, dbDir, uploadsDir, historyPath string) {
+func (s *APIServer) getProjectPaths(project string) (configDBPath, papersDBPath, jsonlDir, dbDir, uploadsDir string) {
 	if project == "" || project == "default" {
-		ymlPath = "config/collection.yml"
-		keywordsPath = "config/keywords.txt"
-		topicsPath = "config/topics.txt"
-		anchorsPath = "config/anchor.txt"
-		dbPath = s.dbPath
+		configDBPath = filepath.Join(filepath.Dir(s.dbPath), "config.db")
+		papersDBPath = s.dbPath
 		jsonlDir = "data/jsonl"
 		dbDir = "data"
 		uploadsDir = "data/uploads"
-		historyPath = "config/history.json"
 		return
 	}
 
 	project = sanitizeProjectName(project)
 	projDir := filepath.Join("projects", project)
-	ymlPath = filepath.Join(projDir, "config", "collection.yml")
-	keywordsPath = filepath.Join(projDir, "config", "keywords.txt")
-	topicsPath = filepath.Join(projDir, "config", "topics.txt")
-	anchorsPath = filepath.Join(projDir, "config", "anchor.txt")
-	dbPath = filepath.Join(projDir, "data", "stratum.db")
+	configDBPath = filepath.Join(projDir, "data", "config.db")
+	papersDBPath = filepath.Join(projDir, "data", fmt.Sprintf("%s.db", project))
 	jsonlDir = filepath.Join(projDir, "data", "jsonl")
 	dbDir = filepath.Join(projDir, "data")
 	uploadsDir = filepath.Join(projDir, "data", "uploads")
-	historyPath = filepath.Join(projDir, "config", "history.json")
 	return
+}
+
+func (s *APIServer) getConfigDB(project string) (*sql.DB, error) {
+	if project == "" {
+		project = "default"
+	}
+	project = sanitizeProjectName(project)
+
+	s.mu.Lock()
+	if dbConn, ok := s.configDBs[project]; ok {
+		s.mu.Unlock()
+		return dbConn, nil
+	}
+	s.mu.Unlock()
+
+	configDBPath, _, _, _, _ := s.getProjectPaths(project)
+
+	if err := os.MkdirAll(filepath.Dir(configDBPath), 0755); err != nil {
+		return nil, err
+	}
+
+	dbConn, err := sql.Open("duckdb", configDBPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := dbConn.Ping(); err != nil {
+		dbConn.Close()
+		return nil, err
+	}
+
+	// Initialize config database schema
+	queries := []string{
+		`CREATE TABLE IF NOT EXISTS config (
+			id INTEGER PRIMARY KEY,
+			email VARCHAR,
+			api_keys VARCHAR,
+			date_from VARCHAR,
+			date_to VARCHAR,
+			doc_types VARCHAR,
+			batch_size_topics INTEGER,
+			per_page INTEGER,
+			concurrent_requests INTEGER,
+			max_retries INTEGER,
+			retry_delay INTEGER,
+			llm_provider VARCHAR,
+			llm_model VARCHAR,
+			llm_base_url VARCHAR,
+			keywords VARCHAR,
+			topics VARCHAR,
+			anchors VARCHAR
+		);`,
+		`CREATE TABLE IF NOT EXISTS config_history (
+			version INTEGER PRIMARY KEY,
+			timestamp VARCHAR,
+			label VARCHAR,
+			keywords VARCHAR,
+			topics VARCHAR,
+			anchors VARCHAR
+		);`,
+	}
+
+	for _, q := range queries {
+		if _, err := dbConn.Exec(q); err != nil {
+			dbConn.Close()
+			return nil, err
+		}
+	}
+
+	var count int
+	err = dbConn.QueryRow("SELECT COUNT(*) FROM config").Scan(&count)
+	if err != nil {
+		dbConn.Close()
+		return nil, err
+	}
+
+	if count == 0 {
+		// Default config values
+		email := "sathyarajasekar5873@gmail.com"
+		apiKeys := "28leglCF5hY0mVmVYXSNNm"
+		dateFrom := "2003-01-01"
+		dateTo := "2024-12-31"
+		docTypes := "article,review,proceedings-article"
+		batchSizeTopics := 10
+		perPage := 200
+		concurrentRequests := 10
+		maxRetries := 5
+		retryDelay := 2
+		llmProvider := "ollama"
+		llmModel := "sorc/qwen3.5-instruct:2b"
+		llmBaseURL := "http://localhost:11434"
+		var keywords, topics, anchors string
+
+		// Auto-migrate from legacy collection.yml if it exists
+		var legacyYmlPath string
+		if project == "default" {
+			legacyYmlPath = "config/collection.yml"
+		} else {
+			legacyYmlPath = filepath.Join("projects", project, "config", "collection.yml")
+		}
+
+		if _, err := os.Stat(legacyYmlPath); err == nil {
+			if cfg, err := config.LoadConfig(legacyYmlPath); err == nil {
+				email = cfg.API.Email
+				apiKeys = strings.Join(cfg.API.Keys, ",")
+				dateFrom = cfg.Filters.DateFrom
+				dateTo = cfg.Filters.DateTo
+				docTypes = strings.Join(cfg.Filters.DocTypes, ",")
+				batchSizeTopics = cfg.Collection.BatchSizeTopics
+				perPage = cfg.Collection.PerPage
+				concurrentRequests = cfg.Collection.ConcurrentRequests
+				maxRetries = cfg.Collection.MaxRetries
+				retryDelay = cfg.Collection.RetryDelay
+				llmProvider = cfg.LLM.Provider
+				llmModel = cfg.LLM.Model
+				llmBaseURL = cfg.LLM.BaseURL
+				keywords = cfg.Keywords
+				topics = strings.Join(cfg.Topics, "\n")
+				anchors = strings.Join(cfg.Anchors, "\n")
+			}
+		}
+
+		_, err = dbConn.Exec(`INSERT INTO config (
+			id, email, api_keys, date_from, date_to, doc_types,
+			batch_size_topics, per_page, concurrent_requests, max_retries, retry_delay,
+			llm_provider, llm_model, llm_base_url, keywords, topics, anchors
+		) VALUES (
+			1, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?
+		)`,
+			email, apiKeys, dateFrom, dateTo, docTypes,
+			batchSizeTopics, perPage, concurrentRequests, maxRetries, retryDelay,
+			llmProvider, llmModel, llmBaseURL, keywords, topics, anchors,
+		)
+		if err != nil {
+			dbConn.Close()
+			return nil, err
+		}
+	}
+
+	s.mu.Lock()
+	s.configDBs[project] = dbConn
+	s.mu.Unlock()
+
+	return dbConn, nil
 }
 
 func (s *APIServer) ensureProjectDirs(project string) error {
 	if project == "" || project == "default" {
-		_ = os.MkdirAll("config", 0755)
 		_ = os.MkdirAll("data/jsonl", 0755)
 		_ = os.MkdirAll("data/uploads", 0755)
 		return nil
@@ -222,9 +364,6 @@ func (s *APIServer) ensureProjectDirs(project string) error {
 
 	project = sanitizeProjectName(project)
 	projDir := filepath.Join("projects", project)
-	if err := os.MkdirAll(filepath.Join(projDir, "config"), 0755); err != nil {
-		return err
-	}
 	if err := os.MkdirAll(filepath.Join(projDir, "data", "jsonl"), 0755); err != nil {
 		return err
 	}
@@ -234,42 +373,8 @@ func (s *APIServer) ensureProjectDirs(project string) error {
 	return nil
 }
 
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, in)
-	return err
-}
-
 func (s *APIServer) initializeProjectFiles(project string) error {
-	if project == "" || project == "default" {
-		return nil
-	}
-	project = sanitizeProjectName(project)
-	ymlPath, keywordsPath, topicsPath, anchorsPath, _, _, _, _, _ := s.getProjectPaths(project)
-
-	if _, err := os.Stat(ymlPath); os.IsNotExist(err) {
-		_ = copyFile("config/collection.yml", ymlPath)
-	}
-	if _, err := os.Stat(keywordsPath); os.IsNotExist(err) {
-		_ = copyFile("config/keywords.txt", keywordsPath)
-	}
-	if _, err := os.Stat(topicsPath); os.IsNotExist(err) {
-		_ = copyFile("config/topics.txt", topicsPath)
-	}
-	if _, err := os.Stat(anchorsPath); os.IsNotExist(err) {
-		_ = copyFile("config/anchor.txt", anchorsPath)
-	}
+	// config.db is initialized dynamically in getConfigDB, so this is a no-op
 	return nil
 }
 
@@ -306,7 +411,7 @@ func (s *APIServer) getDBMgr(project string) (*db.DBManager, error) {
 	}
 	s.mu.Unlock()
 
-	_, _, _, _, dbPath, _, _, _, _ := s.getProjectPaths(project)
+	_, dbPath, _, _, _ := s.getProjectPaths(project)
 
 	dbDir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dbDir, 0755); err != nil {
@@ -376,31 +481,31 @@ func (s *APIServer) updateStatus(project string, syncing bool, progress int, msg
 	status.Logs = append(status.Logs, fmt.Sprintf("[%s] %s", timestamp, msg))
 }
 
-func loadConfigHistory(path string) ([]ConfigRevision, error) {
-	data, err := os.ReadFile(path)
+func loadConfigHistory(dbConn *sql.DB) ([]ConfigRevision, error) {
+	rows, err := dbConn.Query(`SELECT version, timestamp, label, keywords, topics, anchors 
+		FROM config_history ORDER BY version ASC`)
 	if err != nil {
-		if os.IsNotExist(err) {
+		return []ConfigRevision{}, nil
+	}
+	defer rows.Close()
+
+	var list []ConfigRevision
+	for rows.Next() {
+		var rev ConfigRevision
+		err = rows.Scan(&rev.Version, &rev.Timestamp, &rev.Label, &rev.Keywords, &rev.Topics, &rev.Anchors)
+		if err != nil {
 			return []ConfigRevision{}, nil
 		}
-		return nil, err
+		list = append(list, rev)
 	}
-	var list []ConfigRevision
-	if err := json.Unmarshal(data, &list); err != nil {
-		return []ConfigRevision{}, nil
+	if list == nil {
+		list = []ConfigRevision{}
 	}
 	return list, nil
 }
 
-func saveConfigHistory(path string, list []ConfigRevision) error {
-	data, err := json.MarshalIndent(list, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0644)
-}
-
-func (s *APIServer) appendConfigRevision(historyPath, keywords, topics, anchors, label string) error {
-	list, err := loadConfigHistory(historyPath)
+func (s *APIServer) appendConfigRevision(dbConn *sql.DB, keywords, topics, anchors, label string) error {
+	list, err := loadConfigHistory(dbConn)
 	if err != nil {
 		list = []ConfigRevision{}
 	}
@@ -414,17 +519,12 @@ func (s *APIServer) appendConfigRevision(historyPath, keywords, topics, anchors,
 		label = fmt.Sprintf("Revision #%d", nextVersion)
 	}
 
-	rev := ConfigRevision{
-		Version:   nextVersion,
-		Timestamp: time.Now().Format(time.RFC3339),
-		Label:     label,
-		Keywords:  keywords,
-		Topics:    topics,
-		Anchors:   anchors,
-	}
+	timestamp := time.Now().Format(time.RFC3339)
 
-	list = append(list, rev)
-	return saveConfigHistory(historyPath, list)
+	_, err = dbConn.Exec(`INSERT INTO config_history (version, timestamp, label, keywords, topics, anchors) 
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		nextVersion, timestamp, label, keywords, topics, anchors)
+	return err
 }
 
 func (s *APIServer) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -486,39 +586,68 @@ func (s *APIServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == http.MethodGet {
 		project := r.URL.Query().Get("project")
-		ymlPath, keywordsPath, topicsPath, anchorsPath, _, jsonlDir, dbDir, _, historyPath := s.getProjectPaths(project)
+		configDBPath, _, jsonlDir, dbDir, _ := s.getProjectPaths(project)
 		s.ensureProjectDirs(project)
-		s.initializeProjectFiles(project)
 
-		cfg, err := config.LoadConfig(ymlPath)
+		configDB, err := s.getConfigDB(project)
 		if err != nil {
-			// fallback
-			cfg, err = config.LoadConfig("config/collection.yml")
-			if err != nil {
-				http.Error(w, "Failed to load config: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
+			http.Error(w, "Failed to connect to config DB: "+err.Error(), http.StatusInternalServerError)
+			return
 		}
 
-		cfg.Keywords = keywordsPath
-		cfg.Topics = topicsPath
-		cfg.Anchors = anchorsPath
-		cfg.Output.JSONLDir = jsonlDir
-		cfg.Output.DBDir = dbDir
-
-		keywords, _ := config.GetKeywords(cfg.Keywords)
-		topicsData, _ := os.ReadFile(cfg.Topics)
-		anchorsData, _ := os.ReadFile(cfg.Anchors)
-		historyList, _ := loadConfigHistory(historyPath)
+		historyList, _ := loadConfigHistory(configDB)
 		if historyList == nil {
 			historyList = []ConfigRevision{}
 		}
 
+		versionStr := r.URL.Query().Get("version")
+		if versionStr != "" {
+			var version int
+			if _, err := fmt.Sscanf(versionStr, "%d", &version); err == nil {
+				var keywords, topics, anchors string
+				row := configDB.QueryRow(`SELECT keywords, topics, anchors FROM config_history 
+					WHERE version = ?`, version)
+				err := row.Scan(&keywords, &topics, &anchors)
+				if err == nil {
+					cfg, err := config.LoadConfig(configDBPath)
+					if err == nil {
+						cfg.Keywords = keywords
+						cfg.Topics = strings.Split(topics, "\n")
+						cfg.Anchors = strings.Split(anchors, "\n")
+						cfg.Output.JSONLDir = jsonlDir
+						cfg.Output.DBDir = dbDir
+
+						response := map[string]interface{}{
+							"config":   cfg,
+							"keywords": keywords,
+							"topics":   topics,
+							"anchors":  anchors,
+							"history":  historyList,
+						}
+						json.NewEncoder(w).Encode(response)
+						return
+					}
+				}
+			}
+		}
+
+		cfg, err := config.LoadConfig(configDBPath)
+		if err != nil {
+			http.Error(w, "Failed to load config: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		cfg.Output.JSONLDir = jsonlDir
+		cfg.Output.DBDir = dbDir
+
+		topicsStr := strings.Join(cfg.Topics, "\n")
+		anchorsStr := strings.Join(cfg.Anchors, "\n")
+
 		response := map[string]interface{}{
 			"config":   cfg,
-			"keywords": keywords,
-			"topics":   string(topicsData),
-			"anchors":  string(anchorsData),
+			"keywords": cfg.Keywords,
+			"topics":   topicsStr,
+			"anchors":  anchorsStr,
 			"history":  historyList,
 		}
 		json.NewEncoder(w).Encode(response)
@@ -539,38 +668,64 @@ func (s *APIServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Strictly validate search keywords query
+		errs := openalex.ValidateKeywords(payload.Keywords)
+		if len(errs) > 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":  "Strict keyword validation failed",
+				"errors": errs,
+			})
+			return
+		}
+
 		project := r.URL.Query().Get("project")
-		ymlPath, keywordsPath, topicsPath, anchorsPath, _, jsonlDir, dbDir, _, historyPath := s.getProjectPaths(project)
+		configDBPath, _, jsonlDir, dbDir, _ := s.getProjectPaths(project)
 		s.ensureProjectDirs(project)
 
-		payload.Config.Keywords = keywordsPath
-		payload.Config.Topics = topicsPath
-		payload.Config.Anchors = anchorsPath
+		configDB, err := s.getConfigDB(project)
+		if err != nil {
+			http.Error(w, "Failed to connect to config DB: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Parse newline-separated topics/anchors into slices
+		var topicsList []string
+		for _, t := range strings.Split(payload.Topics, "\n") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				topicsList = append(topicsList, t)
+			}
+		}
+
+		var anchorsList []string
+		for _, a := range strings.Split(payload.Anchors, "\n") {
+			a = strings.TrimSpace(a)
+			if a != "" {
+				anchorsList = append(anchorsList, a)
+			}
+		}
+
+		// Constrain anchors to max 385
+		if len(anchorsList) > 385 {
+			anchorsList = anchorsList[:385]
+			payload.Anchors = strings.Join(anchorsList, "\n")
+		}
+
+		payload.Config.Keywords = payload.Keywords
+		payload.Config.Topics = topicsList
+		payload.Config.Anchors = anchorsList
 		payload.Config.Output.JSONLDir = jsonlDir
 		payload.Config.Output.DBDir = dbDir
 
-		// Save YAML config
-		if err := config.SaveConfig(ymlPath, &payload.Config); err != nil {
-			http.Error(w, "Failed to save config: "+err.Error(), http.StatusInternalServerError)
+		// Save config to DB
+		if err := config.SaveConfig(configDBPath, &payload.Config); err != nil {
+			http.Error(w, "Failed to save config to DB: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		// Write text files
-		if err := os.WriteFile(keywordsPath, []byte(payload.Keywords), 0644); err != nil {
-			http.Error(w, "Failed to save keywords: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if err := os.WriteFile(topicsPath, []byte(payload.Topics), 0644); err != nil {
-			http.Error(w, "Failed to save topics: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if err := os.WriteFile(anchorsPath, []byte(payload.Anchors), 0644); err != nil {
-			http.Error(w, "Failed to save anchors: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// Append revision to history
-		_ = s.appendConfigRevision(historyPath, payload.Keywords, payload.Topics, payload.Anchors, payload.Label)
+		// Append revision to history in DB
+		_ = s.appendConfigRevision(configDB, payload.Keywords, payload.Topics, payload.Anchors, payload.Label)
 
 		w.Write([]byte(`{"status": "success"}`))
 		return
@@ -604,16 +759,13 @@ func (s *APIServer) handleRunPipeline(w http.ResponseWriter, r *http.Request) {
 	s.addLog(project, "[INFO] Pipeline synchronization initiated by web client.")
 
 	go func() {
-		ymlPath, _, _, _, dbPath, jsonlDir, dbDir, _, _ := s.getProjectPaths(project)
-		cfg, err := config.LoadConfig(ymlPath)
+		configDBPath, dbPath, jsonlDir, dbDir, _ := s.getProjectPaths(project)
+		cfg, err := config.LoadConfig(configDBPath)
 		if err != nil {
 			s.updateStatus(project, false, 0, "[ERROR] Failed to load config: "+err.Error())
 			return
 		}
 
-		cfg.Keywords = filepath.Join(filepath.Dir(ymlPath), "keywords.txt")
-		cfg.Topics = filepath.Join(filepath.Dir(ymlPath), "topics.txt")
-		cfg.Anchors = filepath.Join(filepath.Dir(ymlPath), "anchor.txt")
 		cfg.Output.JSONLDir = jsonlDir
 		cfg.Output.DBDir = dbDir
 
@@ -713,7 +865,7 @@ func (s *APIServer) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	project := r.URL.Query().Get("project")
-	_, _, _, _, _, _, _, uploadDir, _ := s.getProjectPaths(project)
+	_, _, _, _, uploadDir := s.getProjectPaths(project)
 	if err := os.MkdirAll(uploadDir, 0755); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to create uploads directory: " + err.Error()})
@@ -844,7 +996,7 @@ func (s *APIServer) handleTFIDF(w http.ResponseWriter, r *http.Request) {
 	}
 
 	project := r.URL.Query().Get("project")
-	_, _, _, anchorsPath, _, _, _, uploadsDir, _ := s.getProjectPaths(project)
+	configDBPath, _, _, _, uploadsDir := s.getProjectPaths(project)
 
 	filePath := filepath.Join(uploadsDir, req.Filename)
 	ext := strings.ToLower(filepath.Ext(filePath))
@@ -878,8 +1030,14 @@ func (s *APIServer) handleTFIDF(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if len(dois) > 0 {
-			anchorData := strings.Join(dois, "\n") + "\n"
-			_ = os.WriteFile(anchorsPath, []byte(anchorData), 0644)
+			if len(dois) > 385 {
+				dois = dois[:385]
+			}
+			cfg, err := config.LoadConfig(configDBPath)
+			if err == nil {
+				cfg.Anchors = dois
+				_ = config.SaveConfig(configDBPath, cfg)
+			}
 		}
 	}
 
@@ -1085,17 +1243,14 @@ func (s *APIServer) handleOpenAlexCount(w http.ResponseWriter, r *http.Request) 
 	// Load anchors from config
 	var anchors []string
 	project := r.URL.Query().Get("project")
-	_, _, _, anchorsPath, _, _, _, _, _ := s.getProjectPaths(project)
+	configDBPath, _, _, _, _ := s.getProjectPaths(project)
 
-	if data, err := os.ReadFile(anchorsPath); err == nil {
-		lines := strings.Split(string(data), "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line != "" && !strings.HasPrefix(line, "#") {
-				norm := normalizeDOI(line)
-				if norm != "" {
-					anchors = append(anchors, norm)
-				}
+	cfg, err := config.LoadConfig(configDBPath)
+	if err == nil {
+		for _, a := range cfg.Anchors {
+			norm := normalizeDOI(a)
+			if norm != "" {
+				anchors = append(anchors, norm)
 			}
 		}
 	}
@@ -1309,25 +1464,23 @@ func (s *APIServer) handleCreateProject(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := s.initializeProjectFiles(name); err != nil {
+	configDB, err := s.getConfigDB(name)
+	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to initialize project files: " + err.Error()})
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to initialize config DB: " + err.Error()})
 		return
 	}
 
 	// Create initial history version 1
-	ymlPath, _, _, _, _, _, _, _, historyPath := s.getProjectPaths(name)
-	cfg, err := config.LoadConfig(ymlPath)
+	configDBPath, _, _, _, _ := s.getProjectPaths(name)
+	cfg, err := config.LoadConfig(configDBPath)
 	var keywords, topics, anchors string
 	if err == nil {
-		keywordsData, _ := config.GetKeywords(cfg.Keywords)
-		keywords = keywordsData
-		td, _ := os.ReadFile(cfg.Topics)
-		topics = string(td)
-		ad, _ := os.ReadFile(cfg.Anchors)
-		anchors = string(ad)
+		keywords = cfg.Keywords
+		topics = strings.Join(cfg.Topics, "\n")
+		anchors = strings.Join(cfg.Anchors, "\n")
 	}
-	_ = s.appendConfigRevision(historyPath, keywords, topics, anchors, "Project Created")
+	_ = s.appendConfigRevision(configDB, keywords, topics, anchors, "Project Created")
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status": "success",

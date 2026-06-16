@@ -1,5 +1,0 @@
-# One OpenAlex topic ID per line (format: T + 5 digits, e.g. T10020)
-# Run: openalex get-topics   to discover topic IDs from your keyword search
-# Example IDs for quantum computing:
-# T10020
-# T10682

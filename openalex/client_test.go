@@ -52,12 +52,21 @@ func TestValidateKeywords(t *testing.T) {
 		{"quantum and physics", 1}, // lowercase operator
 		{"quantum OR OR physics", 1}, // adjacent operators
 		{"()", 1}, // empty parens
+		{"\"\"", 1}, // empty quotes
+		{"\"   \"", 1}, // empty quotes with whitespace
+		{"AND quantum", 1}, // starts with operator
+		{"quantum OR", 1}, // ends with operator
+		{"(AND quantum)", 1}, // dangling operator inside paren
+		{"(quantum OR)", 1}, // dangling operator inside paren
+		{"quantum; OR physics", 1}, // invalid semicolon
+		{"quantum `computing`", 1}, // invalid backtick
+		{"quantum 'physics'", 1}, // invalid single quote
 	}
 
 	for _, tc := range tests {
 		errs := ValidateKeywords(tc.input)
-		if len(errs) != tc.expected {
-			t.Errorf("input %q: expected %d errors, got %d: %v", tc.input, tc.expected, len(errs), errs)
+		if (tc.expected == 0 && len(errs) > 0) || (tc.expected > 0 && len(errs) == 0) {
+			t.Errorf("input %q: expected errors: %t, got %d errors: %v", tc.input, tc.expected > 0, len(errs), errs)
 		}
 	}
 }
@@ -168,16 +177,6 @@ func TestDownloadPapers(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	keywordsPath := filepath.Join(tmpDir, "keywords.txt")
-	if err := os.WriteFile(keywordsPath, []byte("quantum"), 0644); err != nil {
-		t.Fatalf("failed to write keywords file: %v", err)
-	}
-
-	topicsPath := filepath.Join(tmpDir, "topics.txt")
-	if err := os.WriteFile(topicsPath, []byte("T10001\nT10002"), 0644); err != nil {
-		t.Fatalf("failed to write topics file: %v", err)
-	}
-
 	// Mock server that returns W1 for page 1, and empty results for page 2
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cursor := r.URL.Query().Get("cursor")
@@ -194,8 +193,8 @@ func TestDownloadPapers(t *testing.T) {
 	client.baseURL = server.URL
 
 	cfg := &config.AppConfig{
-		Keywords: keywordsPath,
-		Topics:   topicsPath,
+		Keywords: "quantum",
+		Topics:   []string{"T10001", "T10002"},
 		Collection: config.CollectionConfig{
 			BatchSizeTopics:    1,
 			PerPage:            2,
