@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -125,7 +126,7 @@ func (s *APIServer) RegisterRoutes() error {
 
 	s.server = &http.Server{
 		Addr:    s.addr,
-		Handler: mux,
+		Handler: loggingMiddleware(mux),
 	}
 
 	return nil
@@ -137,9 +138,32 @@ func (s *APIServer) Start() error {
 		return fmt.Errorf("server not registered, call RegisterRoutes first")
 	}
 	go func() {
-		s.server.ListenAndServe()
+		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("[FATAL] HTTP server ListenAndServe failed: %v", err)
+			os.Exit(1)
+		}
 	}()
 	return nil
+}
+
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (lrw *loggingResponseWriter) WriteHeader(code int) {
+	lrw.statusCode = code
+	lrw.ResponseWriter.WriteHeader(code)
+}
+
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		lrw := &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(lrw, r)
+		duration := time.Since(start)
+		log.Printf("[HTTP] %s %s - %d (%s)", r.Method, r.URL.String(), lrw.statusCode, duration)
+	})
 }
 
 // Stop gracefully shuts down the server.
