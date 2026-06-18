@@ -33,3 +33,10 @@ data/
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Node dependencies and build files
+node_modules/
+dist/
+build/
+.docusaurus/
+.pnpm-debug.log
