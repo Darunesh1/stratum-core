@@ -25,6 +25,12 @@ export function Root() {
   })
   const [projects, setProjects] = useState<string[]>(['default'])
 
+  // Modal State Hooks
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [projectNameInput, setProjectNameInput] = useState('')
+  const [modalError, setModalError] = useState<string | null>(null)
+  const [isSaving, setIsSaving] = useState(false)
+
   const fetchProjects = async () => {
     try {
       const response = await fetch('/api/projects')
@@ -46,17 +52,25 @@ export function Root() {
     localStorage.setItem('activeProject', activeProject)
   }, [activeProject])
 
-  const handleCreateProject = async () => {
-    const name = prompt(
-      'Enter a name for the new project (alphanumeric, hyphens/underscores only):',
-    )
-    if (!name) return
-    const sanitized = name.replace(/[^a-zA-Z0-9_-]/g, '').trim()
+  const handleCreateProject = () => {
+    setProjectNameInput('')
+    setModalError(null)
+    setIsSaving(false)
+    setIsModalOpen(true)
+  }
+
+  const submitCreateProject = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    const sanitized = projectNameInput.replace(/[^a-zA-Z0-9_-]/g, '').trim()
     if (!sanitized) {
-      alert('Invalid project name.')
+      setModalError(
+        'Invalid project name. Only alphanumeric, hyphens, and underscores are allowed.',
+      )
       return
     }
 
+    setIsSaving(true)
+    setModalError(null)
     try {
       const response = await fetch('/api/projects/create', {
         method: 'POST',
@@ -66,12 +80,15 @@ export function Root() {
       if (response.ok) {
         await fetchProjects()
         setActiveProject(sanitized)
+        setIsModalOpen(false)
       } else {
         const errData = await response.json()
-        alert('Failed to create project: ' + (errData.error || response.statusText))
+        setModalError(errData.error || response.statusText || 'Failed to create project.')
       }
     } catch (err) {
-      alert('Connection error: ' + String(err))
+      setModalError('Connection error: ' + String(err))
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -227,6 +244,81 @@ export function Root() {
           <Outlet />
         </ProjectContext.Provider>
       </main>
+
+      {/* Custom Project Creation Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div
+            className="w-full max-w-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded shadow-xl overflow-hidden animate-in zoom-in-95 duration-200"
+            role="dialog"
+            aria-modal="true"
+          >
+            {/* Modal Header */}
+            <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
+              <h3 className="text-xs font-bold font-mono uppercase tracking-wider text-zinc-900 dark:text-zinc-100">
+                Create New Project
+              </h3>
+            </div>
+
+            <form onSubmit={submitCreateProject}>
+              {/* Modal Body */}
+              <div className="p-5 flex flex-col gap-4">
+                <div className="flex flex-col gap-2">
+                  <label
+                    htmlFor="project-name-input"
+                    className="text-[10px] font-mono font-bold uppercase tracking-wider text-zinc-400"
+                  >
+                    Project Name
+                  </label>
+                  <input
+                    id="project-name-input"
+                    type="text"
+                    value={projectNameInput}
+                    onChange={(e) => {
+                      // Live validate to allow only a-zA-Z0-9_-
+                      const val = e.target.value
+                      const sanitized = val.replace(/[^a-zA-Z0-9_-]/g, '')
+                      setProjectNameInput(sanitized)
+                      if (modalError) setModalError(null)
+                    }}
+                    placeholder="e.g. li-ion-batteries"
+                    autoFocus
+                    className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 px-3 py-2 rounded font-mono text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-zinc-400 dark:focus:border-zinc-700"
+                  />
+                  <span className="text-[9px] font-mono text-zinc-400 leading-normal">
+                    Alphanumeric characters, hyphens, and underscores only.
+                  </span>
+                </div>
+
+                {modalError && (
+                  <div className="p-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50 rounded text-red-600 dark:text-red-400 font-mono text-[10px] leading-relaxed">
+                    {modalError}
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="px-5 py-3 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  disabled={isSaving}
+                  className="px-3 py-1.5 border border-zinc-200 dark:border-zinc-800 rounded text-[10px] font-mono font-bold uppercase text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 bg-white dark:bg-zinc-900 cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSaving || !projectNameInput.trim()}
+                  className="px-3 py-1.5 bg-zinc-900 dark:bg-zinc-100 hover:bg-zinc-805 dark:hover:bg-zinc-200 text-white dark:text-zinc-950 rounded text-[10px] font-mono font-bold uppercase tracking-wider shadow cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition"
+                >
+                  {isSaving ? 'Creating...' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -99,6 +99,17 @@ export function Ingest() {
   const [saving, setSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
 
+  // Custom Alert Modal State
+  const [alertConfig, setAlertConfig] = useState<{
+    type: 'success' | 'error' | 'info'
+    title: string
+    message: string
+  } | null>(null)
+
+  const triggerAlert = (type: 'success' | 'error' | 'info', title: string, message: string) => {
+    setAlertConfig({ type, title, message })
+  }
+
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const fetchConfig = useCallback(async () => {
@@ -183,10 +194,10 @@ export function Ingest() {
         setSelectedDoiCol(dCol)
       } else {
         const errData = await response.json()
-        alert('Upload failed: ' + (errData.error || response.statusText))
+        triggerAlert('error', 'Upload Failed', errData.error || response.statusText)
       }
     } catch (err: unknown) {
-      alert('Upload failed: ' + (err instanceof Error ? err.message : String(err)))
+      triggerAlert('error', 'Upload Failed', err instanceof Error ? err.message : String(err))
     } finally {
       setUploading(false)
     }
@@ -225,10 +236,10 @@ export function Ingest() {
         fetchConfig() // Reload config to reflect newly saved anchors in textarea
       } else {
         const errData = await response.json()
-        alert('Extraction failed: ' + (errData.error || response.statusText))
+        triggerAlert('error', 'Extraction Failed', errData.error || response.statusText)
       }
     } catch (err: unknown) {
-      alert('Extraction failed: ' + (err instanceof Error ? err.message : String(err)))
+      triggerAlert('error', 'Extraction Failed', err instanceof Error ? err.message : String(err))
     } finally {
       setExtracting(false)
     }
@@ -284,10 +295,10 @@ export function Ingest() {
         setQueryValid(data.valid)
         setQueryErrors(data.errors || [])
       } else {
-        alert('Failed to validate query')
+        triggerAlert('error', 'Validation Failed', 'Failed to validate query syntax.')
       }
     } catch (err: unknown) {
-      alert('Connection error: ' + (err instanceof Error ? err.message : String(err)))
+      triggerAlert('error', 'Connection Error', err instanceof Error ? err.message : String(err))
     } finally {
       setValidating(false)
     }
@@ -296,7 +307,7 @@ export function Ingest() {
   // Fetch Real Count Handler
   const handleGetOpenAlexCount = async () => {
     if (!keywords.trim()) {
-      alert('Please enter a query first.')
+      triggerAlert('info', 'Empty Query', 'Please enter a search keywords query first.')
       return
     }
     setCheckingCount(true)
@@ -338,10 +349,14 @@ export function Ingest() {
         setAnchorsMissing(data.anchors_missing || [])
       } else {
         const errData = await response.json()
-        alert('Count failed: ' + (errData.error || response.statusText))
+        triggerAlert('error', 'Count Failed', errData.error || response.statusText)
       }
     } catch (err: unknown) {
-      alert('Count request failed: ' + (err instanceof Error ? err.message : String(err)))
+      triggerAlert(
+        'error',
+        'Count Request Failed',
+        err instanceof Error ? err.message : String(err),
+      )
     } finally {
       setCheckingCount(false)
     }
@@ -393,10 +408,19 @@ export function Ingest() {
         fetchConfig()
         setTimeout(() => setSaveSuccess(false), 4000)
       } else {
-        alert('Failed to save configuration')
+        const errData = await response.json().catch(() => ({}))
+        if (errData.errors && Array.isArray(errData.errors)) {
+          triggerAlert('error', 'Failed to save configuration', '- ' + errData.errors.join('\n- '))
+        } else {
+          triggerAlert(
+            'error',
+            'Failed to save configuration',
+            errData.error || response.statusText || 'Unknown error',
+          )
+        }
       }
     } catch (err: unknown) {
-      alert('Save failed: ' + (err instanceof Error ? err.message : String(err)))
+      triggerAlert('error', 'Save Failed', err instanceof Error ? err.message : String(err))
     } finally {
       setSaving(false)
     }
@@ -780,19 +804,19 @@ export function Ingest() {
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] font-mono uppercase text-zinc-400">Date From</label>
                   <input
-                    type="text"
+                    type="date"
                     value={dateFrom}
                     onChange={(e) => setDateFrom(e.target.value)}
-                    className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-1.5 rounded font-mono text-xs text-center"
+                    className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-1.5 rounded font-mono text-xs text-center cursor-pointer focus:outline-none focus:border-zinc-400 dark:focus:border-zinc-700 w-full"
                   />
                 </div>
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] font-mono uppercase text-zinc-400">Date To</label>
                   <input
-                    type="text"
+                    type="date"
                     value={dateTo}
                     onChange={(e) => setDateTo(e.target.value)}
-                    className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-1.5 rounded font-mono text-xs text-center"
+                    className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-1.5 rounded font-mono text-xs text-center cursor-pointer focus:outline-none focus:border-zinc-400 dark:focus:border-zinc-700 w-full"
                   />
                 </div>
               </div>
@@ -983,7 +1007,9 @@ export function Ingest() {
                           setKeywords(rev.keywords || '')
                           setTopics(rev.topics || '')
                           setAnchors(rev.anchors || '')
-                          alert(
+                          triggerAlert(
+                            'success',
+                            'Revision Loaded',
                             `Loaded revision v${rev.version} to editor. Click "Save Configuration" to apply changes.`,
                           )
                         }}
@@ -1033,6 +1059,45 @@ export function Ingest() {
           </div>
         </form>
       </div>
+
+      {/* Custom Themed Alert Modal */}
+      {alertConfig && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div
+            className="w-full max-w-sm bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded shadow-xl overflow-hidden animate-in zoom-in-95 duration-200"
+            role="alertdialog"
+            aria-modal="true"
+          >
+            {/* Modal Header */}
+            <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center gap-2">
+              <span
+                className={`h-2 w-2 rounded-full ${alertConfig.type === 'success' ? 'bg-emerald-500' : alertConfig.type === 'error' ? 'bg-red-500' : 'bg-blue-500'}`}
+              />
+              <h3 className="text-xs font-bold font-mono uppercase tracking-wider text-zinc-900 dark:text-zinc-100">
+                {alertConfig.title}
+              </h3>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 flex flex-col gap-3">
+              <p className="font-mono text-[11px] leading-relaxed text-zinc-700 dark:text-zinc-350 whitespace-pre-line">
+                {alertConfig.message}
+              </p>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-5 py-3 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 flex items-center justify-end">
+              <button
+                type="button"
+                onClick={() => setAlertConfig(null)}
+                className="px-4 py-1.5 bg-zinc-900 dark:bg-zinc-100 hover:bg-zinc-800 dark:hover:bg-zinc-200 text-white dark:text-zinc-950 rounded text-[10px] font-mono font-bold uppercase tracking-wider cursor-pointer shadow transition"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

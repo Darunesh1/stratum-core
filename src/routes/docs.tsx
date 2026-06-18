@@ -32,8 +32,8 @@ export function Docs() {
           <h3 className="font-mono font-bold uppercase text-xs text-zinc-500">Pipeline Stages</h3>
           <ol className="list-decimal pl-5 flex flex-col gap-2.5">
             <li>
-              <strong>Validate filters</strong>: Checks boolean expression grammar in{' '}
-              <code>keywords.txt</code> and parses topic IDs (TXXXXX) in <code>topics.txt</code>.
+              <strong>Validate filters</strong>: Checks boolean expression grammar and parses
+              OpenAlex topic IDs (TXXXXX) stored in the project's SQLite <code>config.db</code>.
             </li>
             <li>
               <strong>Retrieve counts</strong>: Queries OpenAlex API endpoint to calculate the
@@ -43,15 +43,22 @@ export function Docs() {
               <strong>Concurrent download</strong>: Initiates parallel worker pools downloading
               JSONL assets concurrently, tracking progress using cursors.
             </li>
+            <li>
+              <strong>DOI Catalog Upload & Extraction</strong>: Supports CSV, XLSX, and legacy XLS
+              formats for keyword mining and seed DOI extraction. Features a robust row-scanning
+              fallback to bypass parser column shifts and retrieve all DOIs successfully.
+            </li>
           </ol>
 
           <div className="p-4 border border-zinc-200 bg-zinc-50/50 dark:border-zinc-850 dark:bg-zinc-900/10 font-mono text-[11px] leading-relaxed">
             <span className="font-bold text-zinc-800 dark:text-zinc-200 uppercase tracking-wide block mb-1">
-              Configuration Target file
+              Configuration Storage
             </span>
-            <span>Path: config/collection.yml</span>
+            <span>Database: projects/&#123;project-slug&#125;/config.db</span>
             <br />
-            <span>Output dir: data/jsonl/</span>
+            <span>
+              Output Database: projects/&#123;project-slug&#125;/&#123;project-slug&#125;.db
+            </span>
           </div>
         </div>
       ),
@@ -186,7 +193,7 @@ export function Docs() {
           </h3>
           <ul className="list-disc pl-5 flex flex-col gap-2">
             <li>
-              <code>validate</code>: Parses config files and reports validation status.
+              <code>validate</code>: Parses SQLite config settings and reports validation status.
             </li>
             <li>
               <code>search</code>: Returns count of matching works.
@@ -205,16 +212,34 @@ export function Docs() {
           <h3 className="font-mono font-bold uppercase text-xs text-zinc-500">REST Endpoints</h3>
           <div className="p-4 border border-zinc-200 bg-zinc-50/50 dark:border-zinc-850 dark:bg-zinc-900/10 font-mono text-[11px] leading-relaxed flex flex-col gap-1.5">
             <div>
+              <span className="text-zinc-900 dark:text-zinc-100 font-bold">GET /api/projects</span>{' '}
+              — Lists all dynamic project technology workspaces
+            </div>
+            <div>
+              <span className="text-zinc-900 dark:text-zinc-100 font-bold">
+                POST /api/projects/create
+              </span>{' '}
+              — Creates a new project database and configuration workspace
+            </div>
+            <div>
+              <span className="text-zinc-900 dark:text-zinc-100 font-bold">POST /api/upload</span> —
+              Uploads catalog files (.csv, .xlsx, .xls) and returns column headers
+            </div>
+            <div>
               <span className="text-zinc-900 dark:text-zinc-100 font-bold">GET /api/stats</span> —
-              Returns database summary counts
+              Returns paper database summary metrics and counts
             </div>
             <div>
               <span className="text-zinc-900 dark:text-zinc-100 font-bold">GET /api/config</span> —
-              Retrieves current settings
+              Retrieves current project settings and anchor DOIs
             </div>
             <div>
-              <span className="text-zinc-900 dark:text-zinc-100 font-bold">POST /api/sql</span> —
-              Submits query to DuckDB and returns JSON
+              <span className="text-zinc-900 dark:text-zinc-100 font-bold">POST /api/config</span> —
+              Saves updated configuration revisions to the sqlite database
+            </div>
+            <div>
+              <span className="text-zinc-900 dark:text-zinc-100 font-bold">POST /api/query</span> —
+              Submits a query to the dynamic DuckDB database and returns JSON rows
             </div>
           </div>
         </div>
