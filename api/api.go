@@ -23,6 +23,7 @@ import (
 	"stratum/openalex"
 	"stratum/tfidf"
 
+	"github.com/extrame/xls"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -926,7 +927,45 @@ func parseCSVHeaders(filePath string) ([]string, error) {
 	return headers, nil
 }
 
+func parseXLSRows(filePath string) ([][]string, error) {
+	xlFile, err := xls.Open(filePath, "utf-8")
+	if err != nil {
+		return nil, err
+	}
+	sheet := xlFile.GetSheet(0)
+	if sheet == nil {
+		return nil, fmt.Errorf("no sheets found in Excel file")
+	}
+
+	var rows [][]string
+	for i := 0; i <= int(sheet.MaxRow); i++ {
+		row := sheet.Row(i)
+		if row == nil {
+			rows = append(rows, []string{})
+			continue
+		}
+		colsCount := row.LastCol()
+		rowCells := make([]string, colsCount)
+		for j := 0; j < colsCount; j++ {
+			rowCells[j] = row.Col(j)
+		}
+		rows = append(rows, rowCells)
+	}
+	return rows, nil
+}
+
 func parseExcelHeaders(filePath string) ([]string, error) {
+	if strings.HasSuffix(strings.ToLower(filePath), ".xls") {
+		rows, err := parseXLSRows(filePath)
+		if err != nil {
+			return nil, err
+		}
+		if len(rows) == 0 {
+			return nil, fmt.Errorf("empty sheet")
+		}
+		return rows[0], nil
+	}
+
 	f, err := excelize.OpenFile(filePath)
 	if err != nil {
 		return nil, err
@@ -1103,17 +1142,23 @@ func loadCSVDocuments(filePath, titleCol, abstractCol string) ([]string, error) 
 }
 
 func loadExcelDocuments(filePath, titleCol, abstractCol string) ([]string, error) {
-	f, err := excelize.OpenFile(filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
+	var rows [][]string
+	var err error
+	if strings.HasSuffix(strings.ToLower(filePath), ".xls") {
+		rows, err = parseXLSRows(filePath)
+	} else {
+		f, errOpen := excelize.OpenFile(filePath)
+		if errOpen != nil {
+			return nil, errOpen
+		}
+		defer f.Close()
 
-	sheets := f.GetSheetList()
-	if len(sheets) == 0 {
-		return nil, fmt.Errorf("no sheets found in Excel file")
+		sheets := f.GetSheetList()
+		if len(sheets) == 0 {
+			return nil, fmt.Errorf("no sheets found in Excel file")
+		}
+		rows, err = f.GetRows(sheets[0])
 	}
-	rows, err := f.GetRows(sheets[0])
 	if err != nil {
 		return nil, err
 	}
@@ -1352,12 +1397,28 @@ func extractDOIsFromCSV(filePath, doiCol string) ([]string, error) {
 	var dois []string
 	seen := make(map[string]bool)
 	for _, row := range rows[1:] {
+		found := false
 		if doiIdx < len(row) {
 			rawDOI := strings.TrimSpace(row[doiIdx])
 			norm := normalizeDOI(rawDOI)
-			if norm != "" && !seen[norm] {
-				seen[norm] = true
-				dois = append(dois, norm)
+			if norm != "" {
+				if !seen[norm] {
+					seen[norm] = true
+					dois = append(dois, norm)
+				}
+				found = true
+			}
+		}
+		if !found {
+			for _, cell := range row {
+				norm := normalizeDOI(cell)
+				if norm != "" {
+					if !seen[norm] {
+						seen[norm] = true
+						dois = append(dois, norm)
+					}
+					break
+				}
 			}
 		}
 	}
@@ -1365,17 +1426,23 @@ func extractDOIsFromCSV(filePath, doiCol string) ([]string, error) {
 }
 
 func extractDOIsFromExcel(filePath, doiCol string) ([]string, error) {
-	f, err := excelize.OpenFile(filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
+	var rows [][]string
+	var err error
+	if strings.HasSuffix(strings.ToLower(filePath), ".xls") {
+		rows, err = parseXLSRows(filePath)
+	} else {
+		f, errOpen := excelize.OpenFile(filePath)
+		if errOpen != nil {
+			return nil, errOpen
+		}
+		defer f.Close()
 
-	sheets := f.GetSheetList()
-	if len(sheets) == 0 {
-		return nil, fmt.Errorf("no sheets found in Excel file")
+		sheets := f.GetSheetList()
+		if len(sheets) == 0 {
+			return nil, fmt.Errorf("no sheets found in Excel file")
+		}
+		rows, err = f.GetRows(sheets[0])
 	}
-	rows, err := f.GetRows(sheets[0])
 	if err != nil {
 		return nil, err
 	}
@@ -1398,12 +1465,28 @@ func extractDOIsFromExcel(filePath, doiCol string) ([]string, error) {
 	var dois []string
 	seen := make(map[string]bool)
 	for _, row := range rows[1:] {
+		found := false
 		if doiIdx < len(row) {
 			rawDOI := strings.TrimSpace(row[doiIdx])
 			norm := normalizeDOI(rawDOI)
-			if norm != "" && !seen[norm] {
-				seen[norm] = true
-				dois = append(dois, norm)
+			if norm != "" {
+				if !seen[norm] {
+					seen[norm] = true
+					dois = append(dois, norm)
+				}
+				found = true
+			}
+		}
+		if !found {
+			for _, cell := range row {
+				norm := normalizeDOI(cell)
+				if norm != "" {
+					if !seen[norm] {
+						seen[norm] = true
+						dois = append(dois, norm)
+					}
+					break
+				}
 			}
 		}
 	}
