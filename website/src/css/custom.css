@@ -1,0 +1,112 @@
+/**
+ * Monochrome color palette & premium design variables for Stratum docs.
+ */
+
+:root {
+  --ifm-color-primary: #000000;
+  --ifm-color-primary-dark: #111111;
+  --ifm-color-primary-darker: #222222;
+  --ifm-color-primary-darkest: #333333;
+  --ifm-color-primary-light: #444444;
+  --ifm-color-primary-lighter: #555555;
+  --ifm-color-primary-lightest: #666666;
+
+  /* Layout and General Colors */
+  --ifm-background-color: #ffffff;
+  --ifm-font-color-base: #18181b;
+  --ifm-navbar-background-color: #ffffff;
+  --ifm-footer-background-color: #fafafa;
+  --ifm-card-background-color: #ffffff;
+  --ifm-toc-border-color: #e4e4e7;
+  
+  /* Active menu items */
+  --ifm-menu-color-active: #000000;
+  --ifm-menu-color: #52525b;
+  --ifm-menu-color-background-active: #f4f4f5;
+  --ifm-menu-color-background-hover: #fafafa;
+
+  /* Links */
+  --ifm-link-color: #000000;
+  --ifm-link-hover-color: #444444;
+  --ifm-link-decoration: none;
+  --ifm-link-hover-decoration: underline;
+
+  /* Code elements */
+  --ifm-code-font-size: 85%;
+  --ifm-code-background: #f4f4f5;
+  --ifm-code-padding-horizontal: 0.4rem;
+  --ifm-code-padding-vertical: 0.2rem;
+  --ifm-code-border-radius: 4px;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.05);
+
+  /* Typography */
+  --ifm-font-family-base: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --ifm-heading-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #ffffff;
+  --ifm-color-primary-dark: #eeeeee;
+  --ifm-color-primary-darker: #dddddd;
+  --ifm-color-primary-darkest: #cccccc;
+  --ifm-color-primary-light: #999999;
+  --ifm-color-primary-lighter: #888888;
+  --ifm-color-primary-lightest: #777777;
+
+  /* Layout and General Colors */
+  --ifm-background-color: #0a0a0c;
+  --ifm-font-color-base: #f4f4f5;
+  --ifm-navbar-background-color: #0a0a0c;
+  --ifm-footer-background-color: #121214;
+  --ifm-card-background-color: #121214;
+  --ifm-toc-border-color: #27272a;
+
+  /* Active menu items */
+  --ifm-menu-color-active: #ffffff;
+  --ifm-menu-color: #a1a1aa;
+  --ifm-menu-color-background-active: #18181b;
+  --ifm-menu-color-background-hover: #121214;
+
+  /* Links */
+  --ifm-link-color: #ffffff;
+  --ifm-link-hover-color: #a1a1aa;
+  --ifm-link-decoration: none;
+  --ifm-link-hover-decoration: underline;
+
+  /* Code elements */
+  --ifm-code-background: #18181b;
+  --docusaurus-highlighted-code-line-bg: rgba(255, 255, 255, 0.05);
+}
+
+/* Custom premium visual improvements */
+.navbar {
+  border-bottom: 1px solid var(--ifm-toc-border-color);
+  box-shadow: none !important;
+}
+
+.footer {
+  border-top: 1px solid var(--ifm-toc-border-color);
+}
+
+/* Make tables look slick */
+table {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1.5rem;
+}
+
+th, td {
+  border: 1px solid var(--ifm-toc-border-color);
+  padding: 0.75rem;
+  text-align: left;
+}
+
+th {
+  background-color: var(--ifm-footer-background-color);
+  font-weight: 600;
+}
+
+tr:nth-child(even) {
+  background-color: var(--ifm-footer-background-color);
+}
