@@ -1,0 +1,11 @@
+packages:
+  - "website"
+  - "web"
+
+allowBuilds:
+  '@swc/core': true
+  core-js: true
+
+onlyBuiltDependencies:
+  - "@swc/core"
+  - "core-js"
