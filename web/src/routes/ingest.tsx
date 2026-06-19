@@ -12,6 +12,7 @@ import {
   Play,
   CheckCircle,
   Search,
+  PieChart,
 } from 'lucide-react'
 
 interface ScoredKeyword {
@@ -94,6 +95,20 @@ export function Ingest() {
   const [anchorsTotal, setAnchorsTotal] = useState<number | null>(null)
   const [anchorsMatched, setAnchorsMatched] = useState<number | null>(null)
   const [anchorsMissing, setAnchorsMissing] = useState<string[]>([])
+
+  // OpenAlex Topics States
+  interface OpenAlexTopic {
+    topic_id: string
+    display_name: string
+    description: string
+    paper_count: number
+    percentage: number
+  }
+  const [checkingTopics, setCheckingTopics] = useState(false)
+  const [openalexTopics, setOpenalexTopics] = useState<OpenAlexTopic[] | null>(null)
+  const [openalexTopicsTotal, setOpenalexTopicsTotal] = useState<number | null>(null)
+  const [openalexTopicsTotalPapers, setOpenalexTopicsTotalPapers] = useState<number | null>(null)
+  const [showAllTopics, setShowAllTopics] = useState(false)
 
   // Save States
   const [saving, setSaving] = useState(false)
@@ -359,6 +374,62 @@ export function Ingest() {
       )
     } finally {
       setCheckingCount(false)
+    }
+  }
+
+  const handleGetOpenAlexTopics = async () => {
+    if (!keywords.trim()) {
+      triggerAlert('info', 'Empty Query', 'Please enter a search keywords query first.')
+      return
+    }
+    setCheckingTopics(true)
+    setOpenalexTopics(null)
+    setOpenalexTopicsTotal(null)
+    setOpenalexTopicsTotalPapers(null)
+
+    const keysList = apiKeysStr
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean)
+    const topicsList = topics
+      .split('\n')
+      .map((t) => t.trim())
+      .filter((t) => t && !t.startsWith('#'))
+    const docTypesList = Object.keys(selectedDocTypes).filter((k) => selectedDocTypes[k])
+
+    try {
+      const response = await fetch(`/api/openalex/topics`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: keywords,
+          keys: keysList,
+          email: apiEmail,
+          date_from: dateFrom,
+          date_to: dateTo,
+          doc_types: docTypesList,
+          topics: topicsList,
+          details: true,
+        }),
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setOpenalexTopics(data.topics || [])
+        setOpenalexTopicsTotal(data.total_topics || 0)
+        setOpenalexTopicsTotalPapers(data.total_papers || 0)
+      } else {
+        const errData = await response.json()
+        triggerAlert('error', 'Topics Fetch Failed', errData.error || response.statusText)
+      }
+    } catch (err: unknown) {
+      triggerAlert(
+        'error',
+        'Topics Request Failed',
+        err instanceof Error ? err.message : String(err),
+      )
+    } finally {
+      setCheckingTopics(false)
     }
   }
 
@@ -922,17 +993,125 @@ export function Ingest() {
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={handleGetOpenAlexCount}
-                disabled={checkingCount || !keywords.trim()}
-                className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 border rounded font-mono text-xs font-bold uppercase bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-800 hover:bg-zinc-800 dark:hover:bg-zinc-200 disabled:opacity-50 cursor-pointer"
-              >
-                <Search className="h-3.5 w-3.5" />
-                Get OpenAlex Count
-              </button>
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleGetOpenAlexCount}
+                  disabled={checkingCount || checkingTopics || !keywords.trim()}
+                  className="flex-1 flex items-center justify-center gap-2 px-3 py-2 border rounded font-mono text-xs font-bold uppercase bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-800 hover:bg-zinc-800 dark:hover:bg-zinc-200 disabled:opacity-50 cursor-pointer"
+                >
+                  {checkingCount ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Search className="h-3.5 w-3.5" />
+                  )}
+                  Get Count
+                </button>
+                <button
+                  type="button"
+                  onClick={handleGetOpenAlexTopics}
+                  disabled={checkingCount || checkingTopics || !keywords.trim()}
+                  className="flex-1 flex items-center justify-center gap-2 px-3 py-2 border rounded font-mono text-xs font-bold uppercase bg-zinc-100 text-zinc-950 dark:bg-zinc-900 dark:text-white border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 disabled:opacity-50 cursor-pointer"
+                >
+                  {checkingTopics ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <PieChart className="h-3.5 w-3.5" />
+                  )}
+                  Get Topics
+                </button>
+              </div>
             </div>
           </div>
+
+          {/* Section: OpenAlex Topics Distribution */}
+          {openalexTopics !== null && (
+            <div className="flex flex-col gap-4 border border-zinc-200 dark:border-zinc-850 p-5 rounded">
+              <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-850 pb-3">
+                <div className="flex flex-col gap-1">
+                  <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-zinc-950 dark:text-zinc-50 flex items-center gap-2">
+                    <PieChart className="h-4 w-4 text-zinc-500" />
+                    OpenAlex Topic Distribution Analysis
+                  </h3>
+                  <p className="text-[11px] text-zinc-400 font-sans">
+                    Found <span className="font-bold text-zinc-700 dark:text-zinc-300">{openalexTopicsTotal?.toLocaleString()}</span> topics across <span className="font-bold text-zinc-700 dark:text-zinc-300">{openalexTopicsTotalPapers?.toLocaleString()}</span> matching papers.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOpenalexTopics(null)}
+                  className="text-[10px] font-mono uppercase text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                >
+                  Clear Results
+                </button>
+              </div>
+
+              {openalexTopics.length === 0 ? (
+                <div className="py-8 text-center text-xs font-mono text-zinc-400 uppercase">
+                  No topic distribution data retrieved
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <div className="overflow-x-auto w-full border border-zinc-100 dark:border-zinc-850 rounded">
+                    <table className="w-full text-left border-collapse text-xs font-sans">
+                      <thead>
+                        <tr className="bg-zinc-50 dark:bg-zinc-900/50 border-b border-zinc-150 dark:border-zinc-800 text-[10px] font-mono uppercase text-zinc-400">
+                          <th className="p-3 w-28">Topic ID</th>
+                          <th className="p-3">Topic Name</th>
+                          <th className="p-3">Description</th>
+                          <th className="p-3 text-right w-32">Paper Count</th>
+                          <th className="p-3 text-right w-40">Percentage</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-100 dark:divide-zinc-850">
+                        {openalexTopics.slice(0, showAllTopics ? openalexTopics.length : 10).map((topic) => (
+                          <tr key={topic.topic_id} className="hover:bg-zinc-50/55 dark:hover:bg-zinc-900/10">
+                            <td className="p-3 font-mono text-[11px]">
+                              <span className="bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-800 dark:text-zinc-300">
+                                {topic.topic_id}
+                              </span>
+                            </td>
+                            <td className="p-3 font-medium text-zinc-900 dark:text-zinc-100 max-w-[200px] truncate" title={topic.display_name}>
+                              {topic.display_name}
+                            </td>
+                            <td className="p-3 text-zinc-400 dark:text-zinc-500 max-w-xs truncate" title={topic.description}>
+                              {topic.description || '—'}
+                            </td>
+                            <td className="p-3 text-right font-mono font-medium text-zinc-950 dark:text-zinc-50">
+                              {topic.paper_count.toLocaleString()}
+                            </td>
+                            <td className="p-3">
+                              <div className="flex items-center justify-end gap-3 w-full">
+                                <div className="w-20 bg-zinc-200 dark:bg-zinc-800 h-1.5 rounded-full overflow-hidden shrink-0">
+                                  <div
+                                    className="bg-zinc-900 dark:bg-zinc-100 h-full rounded-full"
+                                    style={{ width: `${topic.percentage}%` }}
+                                  />
+                                </div>
+                                <span className="font-mono text-[11px] text-zinc-600 dark:text-zinc-400 w-12 text-right">
+                                  {topic.percentage.toFixed(2)}%
+                                </span>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {openalexTopics.length > 10 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllTopics(!showAllTopics)}
+                      className="mx-auto mt-2 px-4 py-1.5 border border-zinc-200 dark:border-zinc-850 hover:bg-zinc-50 dark:hover:bg-zinc-900/50 rounded font-mono text-[10px] uppercase font-bold text-zinc-600 dark:text-zinc-400"
+                    >
+                      {showAllTopics ? 'Show Less (Top 10)' : `Show All ${openalexTopics.length} Topics`}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Bottom Config Fields: Topics & Anchors (Standard fields) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 border border-zinc-200 dark:border-zinc-850 p-5 rounded">
