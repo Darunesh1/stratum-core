@@ -29,6 +29,7 @@ const config: Config = {
       'classic',
       {
         docs: {
+          path: '../docs',
           sidebarPath: './sidebars.ts',
         },
         blog: false,
