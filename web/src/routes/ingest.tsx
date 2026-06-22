@@ -131,9 +131,30 @@ export function Ingest() {
   }
   const [toasts, setToasts] = useState<Toast[]>([])
 
+  const cleanErrorMessage = (msg: string): string => {
+    if (!msg) return 'An unknown error occurred.'
+    if (
+      msg.includes('non-JSON response') &&
+      (msg.includes('<html') || msg.includes('<!doctype html>'))
+    ) {
+      const httpStatusMatch = msg.match(/HTTP \d+/i)
+      const statusStr = httpStatusMatch ? ` (${httpStatusMatch[0]})` : ''
+      const titleMatch = msg.match(/<title>([\s\S]*?)<\/title>/i)
+      if (titleMatch && titleMatch[1]) {
+        return `OpenAlex server error${statusStr}: ${titleMatch[1].trim()}`
+      }
+      const h1Match = msg.match(/<h1>([\s\S]*?)<\/h1>/i)
+      if (h1Match && h1Match[1]) {
+        return `OpenAlex server error${statusStr}: ${h1Match[1].trim()}`
+      }
+      return `OpenAlex server returned an invalid HTML error response${statusStr}. Please try again later.`
+    }
+    return msg.replace(/<[^>]*>/g, '').trim()
+  }
+
   const addToast = (type: 'success' | 'error' | 'info', title: string, message: string) => {
     const id = Math.random().toString(36).substring(2, 9)
-    setToasts((prev) => [...prev, { id, type, title, message }])
+    setToasts((prev) => [...prev, { id, type, title, message: cleanErrorMessage(message) }])
     setTimeout(() => {
       removeToast(id)
     }, 6000)
@@ -166,7 +187,7 @@ export function Ingest() {
   const sendNotification = (title: string, body: string) => {
     if ('Notification' in window && Notification.permission === 'granted') {
       try {
-        new Notification(title, { body })
+        new Notification(title, { body: cleanErrorMessage(body) })
       } catch (err) {
         console.error('Failed to trigger notification:', err)
       }
@@ -181,7 +202,7 @@ export function Ingest() {
   } | null>(null)
 
   const triggerAlert = (type: 'success' | 'error' | 'info', title: string, message: string) => {
-    setAlertConfig({ type, title, message })
+    setAlertConfig({ type, title, message: cleanErrorMessage(message) })
   }
 
   const fileInputRef = useRef<HTMLInputElement>(null)

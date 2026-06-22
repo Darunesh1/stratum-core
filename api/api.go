@@ -1270,8 +1270,14 @@ func (s *APIServer) handleOpenAlexCount(w http.ResponseWriter, r *http.Request) 
 
 	// Build the API filter query
 	parts := []string{"title_and_abstract.search:" + req.Query}
-	if len(req.Topics) > 0 {
-		parts = append(parts, "primary_topic.id:"+strings.Join(req.Topics, "|"))
+	var validTopics []string
+	for _, t := range req.Topics {
+		if openalex.ValidateTopicFormat(t) {
+			validTopics = append(validTopics, t)
+		}
+	}
+	if len(validTopics) > 0 {
+		parts = append(parts, "primary_topic.id:"+strings.Join(validTopics, "|"))
 	}
 	parts = append(parts, "from_publication_date:"+req.DateFrom)
 	parts = append(parts, "to_publication_date:"+req.DateTo)
@@ -1387,8 +1393,14 @@ func (s *APIServer) handleOpenAlexTopics(w http.ResponseWriter, r *http.Request)
 
 	// Build the API filter query
 	parts := []string{"title_and_abstract.search:" + req.Query}
-	if len(req.Topics) > 0 {
-		parts = append(parts, "primary_topic.id:"+strings.Join(req.Topics, "|"))
+	var validTopics []string
+	for _, t := range req.Topics {
+		if openalex.ValidateTopicFormat(t) {
+			validTopics = append(validTopics, t)
+		}
+	}
+	if len(validTopics) > 0 {
+		parts = append(parts, "primary_topic.id:"+strings.Join(validTopics, "|"))
 	}
 	parts = append(parts, "from_publication_date:"+req.DateFrom)
 	parts = append(parts, "to_publication_date:"+req.DateTo)
