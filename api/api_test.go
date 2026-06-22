@@ -517,3 +517,89 @@ func TestOpenAlexTopicsRoute(t *testing.T) {
 	}
 }
 
+func TestOpenAlexCountRouteWithInvalidTopics(t *testing.T) {
+	dbPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	server := NewAPIServer("localhost:8080", dbPath)
+	err := server.RegisterRoutes()
+	if err != nil {
+		t.Fatalf("RegisterRoutes failed: %v", err)
+	}
+
+	// Mock OpenAlex API
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Check that the filter parameter does NOT contain "energy batteries" (only valid topics like T10012)
+		filterVal := r.URL.Query().Get("filter")
+		if strings.Contains(filterVal, "energy") || strings.Contains(filterVal, "batteries") {
+			t.Errorf("filter query contains unsanitized invalid topic: %q", filterVal)
+		}
+		fmt.Fprintln(w, `{"meta":{"count":123,"next_cursor":""},"results":[]}`)
+	}))
+	defer ts.Close()
+
+	mockURL, _ := url.Parse(ts.URL)
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = &redirectTransport{targetURL: mockURL, origTransport: origTransport}
+	defer func() { http.DefaultTransport = origTransport }()
+
+	bodyJSON, _ := json.Marshal(map[string]interface{}{
+		"query":  "battery",
+		"email":  "test@example.com",
+		"topics": []string{"energy batteries", "T10012"}, // "energy batteries" is invalid and should be filtered out
+	})
+
+	req := httptest.NewRequest("POST", "/api/openalex/count", bytes.NewBuffer(bodyJSON))
+	w := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestOpenAlexTopicsRouteWithInvalidTopics(t *testing.T) {
+	dbPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	server := NewAPIServer("localhost:8080", dbPath)
+	err := server.RegisterRoutes()
+	if err != nil {
+		t.Fatalf("RegisterRoutes failed: %v", err)
+	}
+
+	// Mock OpenAlex API
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		filterVal := r.URL.Query().Get("filter")
+		if strings.Contains(filterVal, "energy") || strings.Contains(filterVal, "batteries") {
+			t.Errorf("filter query contains unsanitized invalid topic: %q", filterVal)
+		}
+		if strings.Contains(r.URL.Path, "/works") {
+			fmt.Fprintln(w, `{"group_by":[{"key":"https://openalex.org/T10001","key_display_name":"Topic 1","count":10}],"meta":{"count":1,"next_cursor":""}}`)
+		} else if strings.Contains(r.URL.Path, "/topics/") {
+			fmt.Fprintln(w, `{"id":"https://openalex.org/T10001","display_name":"Topic 1","description":"Test Topic"}`)
+		}
+	}))
+	defer ts.Close()
+
+	mockURL, _ := url.Parse(ts.URL)
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = &redirectTransport{targetURL: mockURL, origTransport: origTransport}
+	defer func() { http.DefaultTransport = origTransport }()
+
+	bodyJSON, _ := json.Marshal(map[string]interface{}{
+		"query":  "battery",
+		"email":  "test@example.com",
+		"topics": []string{"energy batteries", "T10012"}, // "energy batteries" should be filtered out
+	})
+
+	req := httptest.NewRequest("POST", "/api/openalex/topics", bytes.NewBuffer(bodyJSON))
+	w := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+	}
+}
