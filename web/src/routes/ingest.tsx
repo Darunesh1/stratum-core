@@ -603,24 +603,24 @@ export function Ingest() {
             key={toast.id}
             className={`p-4 rounded-lg shadow-lg border text-xs font-mono flex items-start justify-between gap-3 pointer-events-auto transition-all duration-300 animate-slide-in ${
               toast.type === 'success'
-                ? 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-250 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                ? 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
                 : toast.type === 'error'
-                  ? 'bg-red-50 dark:bg-red-950/20 border-red-250 dark:border-red-800 text-red-800 dark:text-red-300'
-                  : 'bg-blue-50 dark:bg-blue-950/20 border-blue-250 dark:border-blue-800 text-blue-800 dark:text-blue-300'
+                  ? 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800 text-red-800 dark:text-red-300'
+                  : 'bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300'
             }`}
           >
             <div className="flex flex-col gap-1">
               <span className="font-bold uppercase tracking-wider text-[10px]">
                 {toast.title}
               </span>
-              <p className="font-sans leading-relaxed text-zinc-650 dark:text-zinc-400">
+              <p className="font-sans leading-relaxed text-zinc-600 dark:text-zinc-400">
                 {toast.message}
               </p>
             </div>
             <button
               type="button"
               onClick={() => removeToast(toast.id)}
-              className="text-zinc-450 hover:text-zinc-600 dark:hover:text-zinc-200 cursor-pointer shrink-0"
+              className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 cursor-pointer shrink-0"
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -629,7 +629,7 @@ export function Ingest() {
       </div>
 
       {/* Page Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between border-b border-zinc-200 pb-5 dark:border-zinc-850 gap-4">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between border-b border-zinc-200 pb-5 dark:border-zinc-800 gap-4">
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-mono font-bold tracking-tight text-zinc-950 dark:text-zinc-50 uppercase">
             Pipeline Setup & Keywords Studio
@@ -647,8 +647,8 @@ export function Ingest() {
             onClick={() => setActiveTab('keywords')}
             className={`flex items-center gap-2 px-3.5 py-2 rounded-md transition-all cursor-pointer ${
               activeTab === 'keywords'
-                ? 'bg-white dark:bg-zinc-800 shadow-sm text-zinc-950 dark:text-white border border-zinc-200/50 dark:border-zinc-700/50'
-                : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-350'
+                ? 'bg-white dark:bg-zinc-800 shadow-sm text-zinc-955 dark:text-white border border-zinc-200/50 dark:border-zinc-700/50'
+                : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
             }`}
           >
             <FileText className="h-3.5 w-3.5 text-zinc-500" />
@@ -659,8 +659,8 @@ export function Ingest() {
             onClick={() => setActiveTab('filters')}
             className={`flex items-center gap-2 px-3.5 py-2 rounded-md transition-all cursor-pointer ${
               activeTab === 'filters'
-                ? 'bg-white dark:bg-zinc-800 shadow-sm text-zinc-950 dark:text-white border border-zinc-200/50 dark:border-zinc-700/50'
-                : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-350'
+                ? 'bg-white dark:bg-zinc-800 shadow-sm text-zinc-955 dark:text-white border border-zinc-200/50 dark:border-zinc-700/50'
+                : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
             }`}
           >
             <Sliders className="h-3.5 w-3.5 text-zinc-500" />
@@ -671,8 +671,8 @@ export function Ingest() {
             onClick={() => setActiveTab('execution')}
             className={`flex items-center gap-2 px-3.5 py-2 rounded-md transition-all cursor-pointer ${
               activeTab === 'execution'
-                ? 'bg-white dark:bg-zinc-800 shadow-sm text-zinc-950 dark:text-white border border-zinc-200/50 dark:border-zinc-700/50'
-                : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-350'
+                ? 'bg-white dark:bg-zinc-800 shadow-sm text-zinc-955 dark:text-white border border-zinc-200/50 dark:border-zinc-700/50'
+                : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
             }`}
           >
             <Activity className="h-3.5 w-3.5 text-zinc-500" />
@@ -695,9 +695,9 @@ export function Ingest() {
         {activeTab === 'keywords' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start w-full">
             {/* LEFT SUB-COLUMN: TF-IDF Extraction (cols: 5) */}
-            <div className="lg:col-span-5 flex flex-col gap-6 border border-zinc-200 dark:border-zinc-850 p-5 bg-zinc-50/20 dark:bg-zinc-950/20 rounded">
-              <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-850 pb-2">
-                <span className="text-sm font-mono font-bold uppercase tracking-wider text-zinc-855 dark:text-zinc-200">
+            <div className="lg:col-span-5 flex flex-col gap-6 border border-zinc-200 dark:border-zinc-800 p-5 bg-zinc-50/20 dark:bg-zinc-950/20 rounded">
+              <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-2">
+                <span className="text-sm font-mono font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200">
                   TF-IDF Keyword Extraction
                 </span>
                 <span className="text-[10px] font-mono text-zinc-400">LOCAL CATALOGS</span>
@@ -705,7 +705,7 @@ export function Ingest() {
 
               {/* Step 1: File Uploader */}
               <div className="flex flex-col gap-2.5">
-                <span className="text-xs font-mono font-bold uppercase text-zinc-505">
+                <span className="text-xs font-mono font-bold uppercase text-zinc-500">
                   1. Select CSV or Excel File
                 </span>
                 <div className="flex gap-2">
@@ -722,7 +722,7 @@ export function Ingest() {
                     className="flex-1 flex items-center justify-center gap-2 px-3 py-3 border border-dashed border-zinc-300 dark:border-zinc-800 rounded font-mono text-xs cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
                   >
                     <Upload className="h-4 w-4 text-zinc-400" />
-                    <span className="text-zinc-705 dark:text-zinc-300 truncate">
+                    <span className="text-zinc-700 dark:text-zinc-300 truncate">
                       {file ? file.name : 'Choose catalog file...'}
                     </span>
                   </button>
@@ -746,8 +746,8 @@ export function Ingest() {
 
               {/* Step 2: Column Selection & Parameters (Only after upload) */}
               {uploadSuccess && (
-                <div className="flex flex-col gap-4 border-t border-zinc-200 dark:border-zinc-850 pt-4">
-                  <span className="text-xs font-mono font-bold uppercase text-zinc-505">
+                <div className="flex flex-col gap-4 border-t border-zinc-200 dark:border-zinc-800 pt-4">
+                  <span className="text-xs font-mono font-bold uppercase text-zinc-500">
                     2. Configure Text Mining
                   </span>
 
@@ -803,7 +803,7 @@ export function Ingest() {
                   </div>
 
                   {/* Advanced TF-IDF params */}
-                  <div className="grid grid-cols-3 gap-2 border-t border-zinc-150 dark:border-zinc-850/50 pt-3 mt-1">
+                  <div className="grid grid-cols-3 gap-2 border-t border-zinc-100 dark:border-zinc-800 pt-3 mt-1">
                     <div className="flex flex-col gap-1">
                       <label className="text-[9px] font-mono uppercase text-zinc-400">
                         N-gram Range
@@ -843,7 +843,7 @@ export function Ingest() {
                         type="number"
                         value={topN}
                         onChange={(e) => setTopN(Number(e.target.value))}
-                        className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-850 p-1 rounded font-mono text-xs text-center focus:outline-none"
+                        className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-1 rounded font-mono text-xs text-center focus:outline-none"
                       />
                     </div>
                   </div>
@@ -873,9 +873,9 @@ export function Ingest() {
 
               {/* Step 3: Extracted Terms List */}
               {extractedKeywords.length > 0 && (
-                <div className="flex flex-col gap-3 border-t border-zinc-200 dark:border-zinc-850 pt-4">
+                <div className="flex flex-col gap-3 border-t border-zinc-200 dark:border-zinc-800 pt-4">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-mono font-bold uppercase text-zinc-505">
+                    <span className="text-xs font-mono font-bold uppercase text-zinc-500">
                       3. Select Scored Keywords ({extractedKeywords.filter((k) => k.selected).length}{' '}
                       selected)
                     </span>
@@ -899,7 +899,7 @@ export function Ingest() {
                   </div>
 
                   {/* Scrollable checklist */}
-                  <div className="max-h-60 overflow-y-auto border border-zinc-200 dark:border-zinc-850 rounded bg-white dark:bg-zinc-950/40 p-1 flex flex-col gap-0.5">
+                  <div className="max-h-60 overflow-y-auto border border-zinc-200 dark:border-zinc-800 rounded bg-white dark:bg-zinc-950/40 p-1 flex flex-col gap-0.5">
                     {extractedKeywords.map((kw, i) => (
                       <label
                         key={kw.term}
@@ -926,7 +926,7 @@ export function Ingest() {
                   <button
                     type="button"
                     onClick={appendKeywordsToQuery}
-                    className="w-full flex items-center justify-center gap-2 px-3 py-2 border border-zinc-300 dark:border-zinc-800 rounded bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-850 text-zinc-700 dark:text-zinc-300 font-mono text-xs cursor-pointer select-none font-bold uppercase"
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 border border-zinc-300 dark:border-zinc-800 rounded bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-mono text-xs cursor-pointer select-none font-bold uppercase"
                   >
                     <Copy className="h-4 w-4" />
                     Append Selected to Query
@@ -937,7 +937,7 @@ export function Ingest() {
 
             {/* RIGHT SUB-COLUMN: Query Builder, Topics & Anchors Editor (cols: 7) */}
             <div className="lg:col-span-7 flex flex-col gap-6">
-              <div className="flex flex-col gap-3 border border-zinc-200 dark:border-zinc-850 p-5 rounded bg-white dark:bg-zinc-950/10">
+              <div className="flex flex-col gap-3 border border-zinc-200 dark:border-zinc-800 p-5 rounded bg-white dark:bg-zinc-950/10">
                 <div className="flex items-center justify-between">
                   <label
                     htmlFor="keywords-input"
@@ -955,7 +955,7 @@ export function Ingest() {
                   disabled={saving}
                   value={keywords}
                   onChange={(e) => setKeywords(e.target.value)}
-                  className="w-full h-64 p-4 border border-zinc-200 dark:border-zinc-850 bg-zinc-950 text-zinc-300 font-mono text-xs leading-relaxed focus:outline-none focus:ring-0 rounded"
+                  className="w-full h-64 p-4 border border-zinc-200 dark:border-zinc-800 bg-zinc-950 text-zinc-300 font-mono text-xs leading-relaxed focus:outline-none focus:ring-0 rounded"
                   placeholder="Enter boolean query using OR / AND / NOT operators..."
                 />
 
@@ -964,7 +964,7 @@ export function Ingest() {
                     type="button"
                     onClick={handleValidateQuery}
                     disabled={validating || !keywords.trim()}
-                    className="flex items-center gap-2 px-3.5 py-1.5 border border-zinc-300 dark:border-zinc-800 rounded bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-850 text-zinc-700 dark:text-zinc-300 font-mono text-xs cursor-pointer disabled:opacity-50 select-none font-bold uppercase"
+                    className="flex items-center gap-2 px-3.5 py-1.5 border border-zinc-300 dark:border-zinc-800 rounded bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-mono text-xs cursor-pointer disabled:opacity-50 select-none font-bold uppercase"
                   >
                     {validating ? (
                       <>
@@ -996,7 +996,7 @@ export function Ingest() {
               </div>
 
               {/* Target Topics & Anchor DOIs Config Panel */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 border border-zinc-200 dark:border-zinc-850 p-5 rounded bg-white dark:bg-zinc-950/10">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 border border-zinc-200 dark:border-zinc-800 p-5 rounded bg-white dark:bg-zinc-950/10">
                 <div className="flex flex-col gap-2">
                   <label
                     htmlFor="topics-input"
@@ -1009,7 +1009,7 @@ export function Ingest() {
                     disabled={saving}
                     value={topics}
                     onChange={(e) => setTopics(e.target.value)}
-                    className="w-full h-40 p-3 border border-zinc-200 dark:border-zinc-850 bg-zinc-50 dark:bg-zinc-900/10 font-mono text-xs leading-relaxed focus:outline-none rounded"
+                    className="w-full h-40 p-3 border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/10 font-mono text-xs leading-relaxed focus:outline-none rounded"
                     placeholder="T10020..."
                   />
                 </div>
@@ -1025,14 +1025,14 @@ export function Ingest() {
                     disabled={saving}
                     value={anchors}
                     onChange={(e) => setAnchors(e.target.value)}
-                    className="w-full h-40 p-3 border border-zinc-200 dark:border-zinc-850 bg-zinc-50 dark:bg-zinc-900/10 font-mono text-xs leading-relaxed focus:outline-none rounded"
+                    className="w-full h-40 p-3 border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/10 font-mono text-xs leading-relaxed focus:outline-none rounded"
                     placeholder="10.1016/j.renene..."
                   />
                 </div>
               </div>
 
               {/* Save config floating-style panel */}
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between border-t border-zinc-200 dark:border-zinc-850 pt-5 mt-2 gap-4">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between border-t border-zinc-200 dark:border-zinc-800 pt-5 mt-2 gap-4">
                 <div className="flex-1 flex flex-col gap-1 max-w-md">
                   <label htmlFor="save-label-keywords" className="text-[10px] font-mono uppercase text-zinc-400">
                     Revision Label / Commit Message (Optional)
@@ -1073,9 +1073,9 @@ export function Ingest() {
         {activeTab === 'filters' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start w-full">
             {/* LEFT SUB-COLUMN: API Keys & Polite Pool Email config (cols: 5) */}
-            <div className="lg:col-span-5 flex flex-col gap-6 border border-zinc-200 dark:border-zinc-850 p-5 bg-zinc-50/20 dark:bg-zinc-950/20 rounded">
-              <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-850 pb-2">
-                <span className="text-sm font-mono font-bold uppercase tracking-wider text-zinc-850 dark:text-zinc-250">
+            <div className="lg:col-span-5 flex flex-col gap-6 border border-zinc-200 dark:border-zinc-800 p-5 bg-zinc-50/20 dark:bg-zinc-950/20 rounded">
+              <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-2">
+                <span className="text-sm font-mono font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200">
                   API Keys & Polite Pool
                 </span>
                 <Key className="h-4 w-4 text-zinc-400" />
@@ -1099,7 +1099,7 @@ export function Ingest() {
                   </span>
                 </div>
 
-                <div className="flex flex-col gap-1.5 mt-1 border-t border-zinc-150 dark:border-zinc-850/50 pt-3">
+                <div className="flex flex-col gap-1.5 mt-1 border-t border-zinc-200 dark:border-zinc-800 pt-3">
                   <label className="text-[11px] font-mono uppercase text-zinc-400 font-bold">
                     Polite Pool Email Address (Contact UserAgent)
                   </label>
@@ -1120,9 +1120,9 @@ export function Ingest() {
 
             {/* RIGHT SUB-COLUMN: Date Filters & Document Types (cols: 7) */}
             <div className="lg:col-span-7 flex flex-col gap-6">
-              <div className="flex flex-col gap-5 border border-zinc-200 dark:border-zinc-850 p-5 rounded bg-white dark:bg-zinc-950/10">
-                <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-850 pb-2">
-                  <span className="text-sm font-mono font-bold uppercase tracking-wider text-zinc-855 dark:text-zinc-250">
+              <div className="flex flex-col gap-5 border border-zinc-200 dark:border-zinc-800 p-5 rounded bg-white dark:bg-zinc-950/10">
+                <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-2">
+                  <span className="text-sm font-mono font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200">
                     Search Constraints & Filtering
                   </span>
                   <Calendar className="h-4 w-4 text-zinc-400" />
@@ -1155,7 +1155,7 @@ export function Ingest() {
                 </div>
 
                 {/* Document Types Checkboxes */}
-                <div className="flex flex-col gap-2.5 mt-2 border-t border-zinc-150 dark:border-zinc-850/50 pt-4">
+                <div className="flex flex-col gap-2.5 mt-2 border-t border-zinc-200 dark:border-zinc-800 pt-4">
                   <span className="text-[11px] font-mono uppercase text-zinc-500 font-bold">
                     Target Document Types
                   </span>
@@ -1165,7 +1165,7 @@ export function Ingest() {
                         key={type}
                         className={`flex items-center gap-2 p-2 rounded border border-zinc-200 dark:border-zinc-800/80 cursor-pointer select-none font-mono text-[11px] ${
                           selectedDocTypes[type]
-                            ? 'bg-zinc-50/50 border-zinc-350 dark:bg-zinc-900/10 dark:border-zinc-705 text-zinc-900 dark:text-zinc-100 font-semibold'
+                            ? 'bg-zinc-50/50 border-zinc-300 dark:bg-zinc-900/10 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 font-semibold'
                             : 'bg-white dark:bg-zinc-950/20 hover:bg-zinc-50 dark:hover:bg-zinc-900/40 text-zinc-400'
                         }`}
                       >
@@ -1189,8 +1189,8 @@ export function Ingest() {
 
               {/* Revisions History Panel */}
               {configHistory.length > 0 && (
-                <div className="flex flex-col gap-4 border border-zinc-200 dark:border-zinc-850 p-5 rounded mt-1 bg-white dark:bg-zinc-950/10">
-                  <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-850 pb-2">
+                <div className="flex flex-col gap-4 border border-zinc-200 dark:border-zinc-800 p-5 rounded mt-1 bg-white dark:bg-zinc-950/10">
+                  <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-2">
                     <span className="text-xs font-mono font-bold uppercase tracking-wider text-zinc-500">
                       Configuration Revision History
                     </span>
@@ -1206,7 +1206,7 @@ export function Ingest() {
                       .map((rev) => (
                         <div
                           key={rev.version}
-                          className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-3 border border-zinc-150 dark:border-zinc-850 bg-white/40 dark:bg-zinc-900/20 rounded gap-3 hover:bg-zinc-50 dark:hover:bg-zinc-900/40 transition"
+                          className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-3 border border-zinc-200 dark:border-zinc-800 bg-white/40 dark:bg-zinc-900/20 rounded gap-3 hover:bg-zinc-50 dark:hover:bg-zinc-900/40 transition"
                         >
                           <div className="flex flex-col gap-1.5 max-w-xl">
                             <div className="flex items-center gap-2">
@@ -1234,7 +1234,7 @@ export function Ingest() {
                                 `Loaded parameters from revision v${rev.version}. Click Save to apply.`,
                               )
                             }}
-                            className="px-2.5 py-1.5 border border-zinc-350 dark:border-zinc-800 rounded bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-850 text-zinc-700 dark:text-zinc-300 font-mono text-[10px] font-bold uppercase cursor-pointer self-start sm:self-center shrink-0"
+                            className="px-2.5 py-1.5 border border-zinc-300 dark:border-zinc-800 rounded bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-mono text-[10px] font-bold uppercase cursor-pointer self-start sm:self-center shrink-0"
                           >
                             Restore to Editor
                           </button>
@@ -1245,7 +1245,7 @@ export function Ingest() {
               )}
 
               {/* Action Buttons: Save Config */}
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between border-t border-zinc-200 dark:border-zinc-850 pt-5 mt-2 gap-4">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between border-t border-zinc-200 dark:border-zinc-800 pt-5 mt-2 gap-4">
                 <div className="flex-1 flex flex-col gap-1 max-w-md">
                   <label htmlFor="save-label-filters" className="text-[10px] font-mono uppercase text-zinc-400">
                     Revision Label / Commit Message (Optional)
@@ -1289,9 +1289,9 @@ export function Ingest() {
             <div className="lg:col-span-6 flex flex-col gap-6">
               
               {/* Desktop Notifications Panel */}
-              <div className="flex flex-col gap-4 border border-zinc-200 dark:border-zinc-850 p-5 rounded bg-zinc-50/10 dark:bg-zinc-950/10">
-                <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-850 pb-2">
-                  <span className="text-xs font-mono font-bold uppercase tracking-wider text-zinc-850 dark:text-zinc-200 flex items-center gap-2">
+              <div className="flex flex-col gap-4 border border-zinc-200 dark:border-zinc-800 p-5 rounded bg-zinc-50/10 dark:bg-zinc-950/10">
+                <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-2">
+                  <span className="text-xs font-mono font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200 flex items-center gap-2">
                     <Bell className="h-4 w-4 text-zinc-500 animate-pulse" />
                     Desktop Alerts Setting
                   </span>
@@ -1304,11 +1304,11 @@ export function Ingest() {
                       Blocked
                     </span>
                   ) : notificationPermission === 'unsupported' ? (
-                    <span className="px-2 py-0.5 rounded bg-zinc-150 text-zinc-500 font-mono text-[9px] font-bold uppercase">
+                    <span className="px-2 py-0.5 rounded bg-zinc-100 text-zinc-500 font-mono text-[9px] font-bold uppercase">
                       Unsupported
                     </span>
                   ) : (
-                    <span className="px-2 py-0.5 rounded bg-amber-50 dark:bg-amber-950/20 text-amber-605 border border-amber-250/50 font-mono text-[9px] font-bold uppercase">
+                    <span className="px-2 py-0.5 rounded bg-amber-50 dark:bg-amber-950/20 text-amber-600 border border-amber-200/50 font-mono text-[9px] font-bold uppercase">
                       Setup needed
                     </span>
                   )}
@@ -1322,9 +1322,9 @@ export function Ingest() {
                   <button
                     type="button"
                     onClick={requestNotificationPermission}
-                    className="w-full flex items-center justify-center gap-2 px-3 py-2 border border-zinc-300 dark:border-zinc-800 rounded font-mono text-xs font-bold uppercase bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-850 text-zinc-700 dark:text-zinc-300 cursor-pointer transition select-none"
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 border border-zinc-300 dark:border-zinc-800 rounded font-mono text-xs font-bold uppercase bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 cursor-pointer transition select-none"
                   >
-                    <Bell className="h-3.5 w-3.5 text-zinc-450 shrink-0" />
+                    <Bell className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
                     Request Notification Permission
                   </button>
                 )}
@@ -1343,7 +1343,7 @@ export function Ingest() {
               </div>
 
               {/* Volume Estimation & Anchor Verification */}
-              <div className="flex flex-col gap-4 border border-zinc-200 dark:border-zinc-850 p-5 rounded bg-white dark:bg-zinc-950/10">
+              <div className="flex flex-col gap-4 border border-zinc-200 dark:border-zinc-800 p-5 rounded bg-white dark:bg-zinc-950/10">
                 <div className="flex flex-col gap-2.5">
                   <span className="text-xs font-mono font-bold uppercase text-zinc-500">
                     Matching Works & Anchor Validation
@@ -1353,13 +1353,13 @@ export function Ingest() {
                   </p>
 
                   {/* Count badge */}
-                  <div className="min-h-[6rem] py-4 px-3 border border-zinc-200 dark:border-zinc-850 bg-zinc-50/50 dark:bg-zinc-900/10 rounded flex flex-col items-center justify-center gap-1 mt-1">
+                  <div className="min-h-[6rem] py-4 px-3 border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/10 rounded flex flex-col items-center justify-center gap-1 mt-1">
                     {checkingCount ? (
                       <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
                     ) : openalexCount !== null ? (
                       <div className="w-full flex flex-col items-center gap-3">
                         <div className="flex flex-col items-center justify-center gap-1">
-                          <span className="text-2xl font-mono font-bold text-zinc-955 dark:text-zinc-50">
+                          <span className="text-2xl font-mono font-bold text-zinc-900 dark:text-zinc-50">
                             {openalexCount.toLocaleString()}
                           </span>
                           <span className="text-[9px] font-mono text-green-600 dark:text-green-400 uppercase tracking-widest font-bold">
@@ -1368,10 +1368,10 @@ export function Ingest() {
                         </div>
 
                         {anchorsTotal !== null && anchorsTotal > 0 && (
-                          <div className="border-t border-zinc-200 dark:border-zinc-850 pt-3 mt-1 w-full flex flex-col gap-1.5">
+                          <div className="border-t border-zinc-200 dark:border-zinc-800 pt-3 mt-1 w-full flex flex-col gap-1.5">
                             <div className="flex justify-between items-center text-[10px] font-mono uppercase tracking-wider text-zinc-400">
                               <span>Anchor Paper Match</span>
-                              <span className="font-bold text-zinc-700 dark:text-zinc-350">
+                              <span className="font-bold text-zinc-700 dark:text-zinc-300">
                                 {anchorsMatched} / {anchorsTotal} (
                                 {anchorsTotal > 0
                                   ? Math.round((anchorsMatched! / anchorsTotal) * 100)
@@ -1379,9 +1379,9 @@ export function Ingest() {
                                 %)
                               </span>
                             </div>
-                            <div className="w-full bg-zinc-250 dark:bg-zinc-800 h-1.5 rounded-full overflow-hidden">
+                            <div className="w-full bg-zinc-200 dark:bg-zinc-800 h-1.5 rounded-full overflow-hidden">
                               <div
-                                className="bg-green-500 h-full rounded-full transition-all duration-305"
+                                className="bg-green-500 h-full rounded-full transition-all duration-300"
                                 style={{
                                   width: `${anchorsTotal > 0 ? (anchorsMatched! / anchorsTotal) * 100 : 0}%`,
                                 }}
@@ -1417,7 +1417,7 @@ export function Ingest() {
                   type="button"
                   onClick={handleGetOpenAlexCount}
                   disabled={checkingCount || checkingTopics || !keywords.trim()}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2 border rounded font-mono text-xs font-bold uppercase bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-955 border-zinc-800 hover:bg-zinc-800 dark:hover:bg-zinc-200 disabled:opacity-50 cursor-pointer"
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 border rounded font-mono text-xs font-bold uppercase bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-800 hover:bg-zinc-800 dark:hover:bg-zinc-200 disabled:opacity-50 cursor-pointer"
                 >
                   {checkingCount ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1431,7 +1431,7 @@ export function Ingest() {
 
             {/* RIGHT COLUMN: Topic Distribution Analysis (cols: 6) */}
             <div className="lg:col-span-6 flex flex-col gap-6">
-              <div className="flex flex-col gap-4 border border-zinc-200 dark:border-zinc-850 p-5 rounded bg-white dark:bg-zinc-950/10">
+              <div className="flex flex-col gap-4 border border-zinc-200 dark:border-zinc-800 p-5 rounded bg-white dark:bg-zinc-950/10">
                 <div className="flex flex-col gap-2.5">
                   <span className="text-xs font-mono font-bold uppercase text-zinc-500">
                     Topic Grouping & Distribution Analysis
@@ -1441,13 +1441,13 @@ export function Ingest() {
                   </p>
 
                   {/* Topics summaries badge */}
-                  <div className="min-h-[6rem] py-4 px-3 border border-zinc-200 dark:border-zinc-850 bg-zinc-50/50 dark:bg-zinc-900/10 rounded flex flex-col items-center justify-center gap-1 mt-1">
+                  <div className="min-h-[6rem] py-4 px-3 border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/10 rounded flex flex-col items-center justify-center gap-1 mt-1">
                     {checkingTopics ? (
                       <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
                     ) : openalexTopics !== null ? (
                       <div className="w-full flex flex-col items-center gap-2.5">
                         <div className="flex flex-col items-center justify-center gap-1">
-                          <span className="text-2xl font-mono font-bold text-zinc-955 dark:text-zinc-50">
+                          <span className="text-2xl font-mono font-bold text-zinc-900 dark:text-zinc-50">
                             {openalexTopicsTotal?.toLocaleString() || 0}
                           </span>
                           <span className="text-[9px] font-mono text-zinc-400 uppercase tracking-widest font-bold">
@@ -1455,7 +1455,7 @@ export function Ingest() {
                           </span>
                         </div>
                         <span className="text-[10px] font-sans text-zinc-400">
-                          Mapped across <span className="font-semibold text-zinc-755 dark:text-zinc-350">{openalexTopicsTotalPapers?.toLocaleString()}</span> papers.
+                          Mapped across <span className="font-semibold text-zinc-700 dark:text-zinc-300">{openalexTopicsTotalPapers?.toLocaleString()}</span> papers.
                         </span>
                       </div>
                     ) : (
@@ -1470,7 +1470,7 @@ export function Ingest() {
                   type="button"
                   onClick={handleGetOpenAlexTopics}
                   disabled={checkingCount || checkingTopics || !keywords.trim()}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2 border rounded font-mono text-xs font-bold uppercase bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-955 border-zinc-800 hover:bg-zinc-800 dark:hover:bg-zinc-200 disabled:opacity-50 cursor-pointer"
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 border rounded font-mono text-xs font-bold uppercase bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-800 hover:bg-zinc-800 dark:hover:bg-zinc-200 disabled:opacity-50 cursor-pointer"
                 >
                   {checkingTopics ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1484,10 +1484,10 @@ export function Ingest() {
 
             {/* FULL-WIDTH ROW: OpenAlex Topics Distribution Table (cols: 12) */}
             {openalexTopics !== null && (
-              <div className="lg:col-span-12 flex flex-col gap-4 border border-zinc-200 dark:border-zinc-850 p-5 rounded mt-2 w-full bg-white dark:bg-zinc-950/10">
-                <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-850 pb-3">
+              <div className="lg:col-span-12 flex flex-col gap-4 border border-zinc-200 dark:border-zinc-800 p-5 rounded mt-2 w-full bg-white dark:bg-zinc-950/10">
+                <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-3">
                   <div className="flex flex-col gap-1">
-                    <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-zinc-955 dark:text-zinc-50 flex items-center gap-2">
+                    <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-50 flex items-center gap-2">
                       <PieChart className="h-4 w-4 text-zinc-500" />
                       OpenAlex Topic Breakdown Results
                     </h3>
@@ -1510,7 +1510,7 @@ export function Ingest() {
                   </div>
                 ) : (
                   <div className="flex flex-col gap-3 w-full">
-                    <div className="overflow-x-auto w-full border border-zinc-100 dark:border-zinc-850 rounded">
+                    <div className="overflow-x-auto w-full border border-zinc-100 dark:border-zinc-800 rounded">
                       <table className="w-full text-left border-collapse text-xs font-sans">
                         <thead>
                           <tr className="bg-zinc-50 dark:bg-zinc-900/50 border-b border-zinc-150 dark:border-zinc-800 text-[10px] font-mono uppercase text-zinc-400">
@@ -1521,18 +1521,18 @@ export function Ingest() {
                             <th className="p-3 text-right w-40 font-bold">Percentage</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-zinc-100 dark:divide-zinc-850">
+                        <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
                           {openalexTopics.slice(0, showAllTopics ? openalexTopics.length : 10).map((topic) => (
                             <tr key={topic.topic_id} className="hover:bg-zinc-50/55 dark:hover:bg-zinc-900/10">
                               <td className="p-3 font-mono text-[11px]">
-                                <span className="bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-855 dark:text-zinc-300 font-semibold border border-zinc-200/50 dark:border-zinc-800">
+                                <span className="bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-800 dark:text-zinc-300 font-semibold border border-zinc-200/50 dark:border-zinc-800">
                                   {topic.topic_id}
                                 </span>
                               </td>
                               <td className="p-3 font-medium text-zinc-900 dark:text-zinc-100 max-w-[200px] truncate font-semibold" title={topic.display_name}>
                                 {topic.display_name}
                               </td>
-                              <td className="p-3 text-zinc-455 dark:text-zinc-550 max-w-xs truncate" title={topic.description}>
+                              <td className="p-3 text-zinc-400 dark:text-zinc-500 max-w-xs truncate" title={topic.description}>
                                 {topic.description || '—'}
                               </td>
                               <td className="p-3 text-right font-mono font-medium text-zinc-950 dark:text-zinc-50">
@@ -1540,13 +1540,13 @@ export function Ingest() {
                               </td>
                               <td className="p-3">
                                 <div className="flex items-center justify-end gap-3 w-full">
-                                  <div className="w-20 bg-zinc-250 dark:bg-zinc-800 h-1.5 rounded-full overflow-hidden shrink-0">
+                                  <div className="w-20 bg-zinc-200 dark:bg-zinc-800 h-1.5 rounded-full overflow-hidden shrink-0">
                                     <div
                                       className="bg-zinc-900 dark:bg-zinc-100 h-full rounded-full"
                                       style={{ width: `${topic.percentage}%` }}
                                     />
                                   </div>
-                                  <span className="font-mono text-[11px] text-zinc-650 dark:text-zinc-400 w-12 text-right">
+                                  <span className="font-mono text-[11px] text-zinc-600 dark:text-zinc-400 w-12 text-right">
                                     {topic.percentage.toFixed(2)}%
                                   </span>
                                 </div>
@@ -1561,7 +1561,7 @@ export function Ingest() {
                       <button
                         type="button"
                         onClick={() => setShowAllTopics(!showAllTopics)}
-                        className="mx-auto mt-2 px-4 py-1.5 border border-zinc-200 dark:border-zinc-850 hover:bg-zinc-50 dark:hover:bg-zinc-900/50 rounded font-mono text-[10px] uppercase font-bold text-zinc-650 dark:text-zinc-400 cursor-pointer"
+                        className="mx-auto mt-2 px-4 py-1.5 border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900/50 rounded font-mono text-[10px] uppercase font-bold text-zinc-600 dark:text-zinc-400 cursor-pointer"
                       >
                         {showAllTopics ? 'Show Less (Top 10)' : `Show All ${openalexTopics.length} Topics`}
                       </button>
