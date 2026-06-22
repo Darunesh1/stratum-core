@@ -61,6 +61,8 @@ func TestValidateKeywords(t *testing.T) {
 		{"quantum; OR physics", 1}, // invalid semicolon
 		{"quantum `computing`", 1}, // invalid backtick
 		{"quantum 'physics'", 1}, // invalid single quote
+		{"{\"Quantum Computing\"}", 1}, // invalid curly brace
+		{"[Quantum Computing]", 1}, // invalid square bracket
 	}
 
 	for _, tc := range tests {

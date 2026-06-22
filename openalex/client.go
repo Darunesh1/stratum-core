@@ -755,7 +755,7 @@ func ValidateKeywords(keywords string) []string {
 	}
 
 	// 8. Safety check for injection characters
-	invalidChars := []string{";", "'", "`", "\\", "<", ">"}
+	invalidChars := []string{";", "'", "`", "\\", "<", ">", "{", "}", "[", "]"}
 	for _, char := range invalidChars {
 		if strings.Contains(q, char) {
 			errors = append(errors, fmt.Sprintf("Query contains invalid character: %q.", char))
