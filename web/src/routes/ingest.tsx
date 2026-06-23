@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useProject } from '../context/ProjectContext'
 import {
   Save,
@@ -18,6 +18,10 @@ import {
   FileText,
   X,
   Activity,
+  Maximize2,
+  Minimize2,
+  Plus,
+  Trash2,
 } from 'lucide-react'
 
 interface ScoredKeyword {
@@ -37,7 +41,6 @@ interface AppConfig {
     doc_types?: string[]
   }
 }
-
 interface ConfigRevision {
   version: number
   timestamp: string
@@ -45,6 +48,269 @@ interface ConfigRevision {
   keywords: string
   topics: string
   anchors: string
+}
+
+interface SearchableListEditorProps {
+  id: string
+  label: string
+  value: string
+  onChange: (val: string) => void
+  placeholder: string
+  disabled?: boolean
+}
+
+function SearchableListEditor({
+  id,
+  label,
+  value,
+  onChange,
+  placeholder,
+  disabled,
+}: SearchableListEditorProps) {
+  const [activeTab, setActiveTab] = useState<'list' | 'raw'>('list')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [newItem, setNewItem] = useState('')
+  const [isExpanded, setIsExpanded] = useState(false)
+
+  // Parse lines
+  const items = useMemo(() => {
+    return value
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+  }, [value])
+
+  const filteredItems = useMemo(() => {
+    if (!searchQuery.trim()) return items
+    return items.filter((item) =>
+      item.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+  }, [items, searchQuery])
+
+  const handleAddItem = (e: React.FormEvent) => {
+    e.preventDefault()
+    const cleaned = newItem.trim()
+    if (!cleaned) return
+    if (items.includes(cleaned)) {
+      setNewItem('')
+      return // Avoid duplicates if already present
+    }
+    const newValue = [...items, cleaned].join('\n')
+    onChange(newValue)
+    setNewItem('')
+  }
+
+  const handleDeleteItem = (itemToDelete: string) => {
+    const newValue = items.filter((item) => item !== itemToDelete).join('\n')
+    onChange(newValue)
+  }
+
+  const handleClearAll = () => {
+    if (window.confirm(`Are you sure you want to clear all ${label.toLowerCase()}?`)) {
+      onChange('')
+    }
+  }
+
+  const EditorContent = (isModal: boolean) => (
+    <div className="flex flex-col h-full gap-3">
+      {/* Header Controls */}
+      <div className="flex items-center justify-between gap-2 border-b border-zinc-150 dark:border-zinc-800/80 pb-2">
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setActiveTab('list')}
+            className={`px-3 py-1 text-xs font-mono font-bold uppercase rounded transition-colors cursor-pointer ${
+              activeTab === 'list'
+                ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100'
+                : 'text-zinc-400 hover:text-zinc-650 dark:hover:text-zinc-350'
+            }`}
+          >
+            List ({items.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('raw')}
+            className={`px-3 py-1 text-xs font-mono font-bold uppercase rounded transition-colors cursor-pointer ${
+              activeTab === 'raw'
+                ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100'
+                : 'text-zinc-400 hover:text-zinc-650 dark:hover:text-zinc-350'
+            }`}
+          >
+            Raw Editor
+          </button>
+        </div>
+
+        <div className="flex items-center gap-3">
+          {items.length > 0 && (
+            <button
+              type="button"
+              onClick={handleClearAll}
+              className="text-[10px] font-mono text-red-500 hover:text-red-650 dark:hover:text-red-400 uppercase font-bold cursor-pointer"
+            >
+              Clear All
+            </button>
+          )}
+          {!isModal && (
+            <button
+              type="button"
+              onClick={() => setIsExpanded(true)}
+              className="p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded text-zinc-450 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors cursor-pointer"
+              title="Expand to big editor"
+            >
+              <Maximize2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {activeTab === 'list' ? (
+        <div className="flex flex-col gap-3 flex-1 min-h-0">
+          {/* Add & Search Controls */}
+          <div className="flex flex-col sm:flex-row gap-2">
+            {/* Search Input */}
+            <div className="relative flex-1">
+              <span className="absolute inset-y-0 left-0 flex items-center pl-2.5 pointer-events-none text-zinc-450">
+                <Search className="h-3.5 w-3.5" />
+              </span>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={`Search ${label.toLowerCase()}...`}
+                className="w-full pl-8 pr-8 py-1.5 border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 rounded font-mono text-xs focus:outline-none"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute inset-y-0 right-0 flex items-center pr-2.5 text-zinc-400 hover:text-zinc-650 dark:hover:text-zinc-200 cursor-pointer"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Quick Add */}
+            <form onSubmit={handleAddItem} className="flex gap-1">
+              <input
+                type="text"
+                value={newItem}
+                onChange={(e) => setNewItem(e.target.value)}
+                placeholder="Add item..."
+                className="w-32 px-3 py-1.5 border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 rounded font-mono text-xs focus:outline-none"
+              />
+              <button
+                type="submit"
+                className="flex items-center justify-center p-1.5 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-850 rounded hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-350 cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </form>
+          </div>
+
+          {/* List display */}
+          <div
+            className={`flex-1 overflow-y-auto border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/10 rounded p-2.5 font-mono text-xs ${
+              isModal ? 'h-[400px]' : 'h-40'
+            }`}
+          >
+            {filteredItems.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-zinc-400 text-xs py-8">
+                {searchQuery ? 'No matching items' : 'List is empty'}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                {filteredItems.map((item) => (
+                  <div
+                    key={item}
+                    className="flex items-center justify-between gap-2 px-2.5 py-1.5 bg-white dark:bg-zinc-900/50 border border-zinc-150 dark:border-zinc-800/80 rounded group hover:border-zinc-300 dark:hover:border-zinc-700 transition-colors"
+                  >
+                    <span className="truncate select-all text-zinc-800 dark:text-zinc-200">{item}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteItem(item)}
+                      className="text-zinc-400 hover:text-red-500 p-0.5 rounded cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="flex-1 flex flex-col min-h-0">
+          <textarea
+            id={id}
+            disabled={disabled}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className={`w-full p-3 border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/10 font-mono text-xs leading-relaxed focus:outline-none rounded resize-none flex-1 ${
+              isModal ? 'h-[400px]' : 'h-40'
+            }`}
+            placeholder={placeholder}
+          />
+        </div>
+      )}
+    </div>
+  )
+
+  return (
+    <>
+      <div className="flex flex-col gap-2 border border-zinc-200 dark:border-zinc-800 p-4 rounded bg-white dark:bg-zinc-950/10 shadow-sm">
+        <label
+          htmlFor={id}
+          className="text-xs font-mono font-bold uppercase tracking-wider text-zinc-500"
+        >
+          {label}
+        </label>
+        {EditorContent(false)}
+      </div>
+
+      {/* Expanded Modal */}
+      {isExpanded && (
+        <div className="fixed inset-0 z-55 flex items-center justify-center p-4 bg-zinc-950/60 backdrop-blur-sm">
+          <div className="w-full max-w-3xl flex flex-col border border-zinc-200 dark:border-zinc-800 rounded-lg bg-white dark:bg-zinc-900 shadow-2xl p-6 h-[580px]">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-zinc-150 dark:border-zinc-800 pb-3 mb-4">
+              <div>
+                <h3 className="text-sm font-mono font-bold uppercase tracking-wider text-zinc-850 dark:text-zinc-100">
+                  {label} Editor
+                </h3>
+                <p className="text-[10px] text-zinc-400 font-mono">
+                  Manage list items individually or edit raw text. Changes are saved automatically.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsExpanded(false)}
+                className="p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors cursor-pointer"
+              >
+                <Minimize2 className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 min-h-0">
+              {EditorContent(true)}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex justify-end pt-3 border-t border-zinc-150 dark:border-zinc-800 mt-4">
+              <button
+                type="button"
+                onClick={() => setIsExpanded(false)}
+                className="px-4 py-2 bg-zinc-900 dark:bg-zinc-100 hover:bg-zinc-800 dark:hover:bg-zinc-200 text-white dark:text-zinc-900 font-mono text-xs font-bold uppercase rounded cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
 }
 
 export function Ingest() {
@@ -1031,39 +1297,23 @@ export function Ingest() {
               </div>
 
               {/* Target Topics & Anchor DOIs Config Panel */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 border border-zinc-200 dark:border-zinc-800 p-5 rounded bg-white dark:bg-zinc-950/10">
-                <div className="flex flex-col gap-2">
-                  <label
-                    htmlFor="topics-input"
-                    className="text-xs font-mono font-bold uppercase tracking-wider text-zinc-500"
-                  >
-                    Target Topics (topics.txt)
-                  </label>
-                  <textarea
-                    id="topics-input"
-                    disabled={saving}
-                    value={topics}
-                    onChange={(e) => setTopics(e.target.value)}
-                    className="w-full h-40 p-3 border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/10 font-mono text-xs leading-relaxed focus:outline-none rounded"
-                    placeholder="T10020..."
-                  />
-                </div>
-                <div className="flex flex-col gap-2">
-                  <label
-                    htmlFor="anchors-input"
-                    className="text-xs font-mono font-bold uppercase tracking-wider text-zinc-500"
-                  >
-                    Anchor DOIs (anchor.txt)
-                  </label>
-                  <textarea
-                    id="anchors-input"
-                    disabled={saving}
-                    value={anchors}
-                    onChange={(e) => setAnchors(e.target.value)}
-                    className="w-full h-40 p-3 border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/10 font-mono text-xs leading-relaxed focus:outline-none rounded"
-                    placeholder="10.1016/j.renene..."
-                  />
-                </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <SearchableListEditor
+                  id="topics-input"
+                  label="Target Topics (topics.txt)"
+                  disabled={saving}
+                  value={topics}
+                  onChange={setTopics}
+                  placeholder="T10020..."
+                />
+                <SearchableListEditor
+                  id="anchors-input"
+                  label="Anchor DOIs (anchor.txt)"
+                  disabled={saving}
+                  value={anchors}
+                  onChange={setAnchors}
+                  placeholder="10.1016/j.renene..."
+                />
               </div>
 
               {/* Save config floating-style panel */}
