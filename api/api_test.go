@@ -347,6 +347,18 @@ func TestPipelineRoutes(t *testing.T) {
 	http.DefaultTransport = &redirectTransport{targetURL: mockURL, origTransport: origTransport}
 	defer func() { http.DefaultTransport = origTransport }()
 
+	// Set valid keywords on the default configuration before running pipeline
+	configDBPath, _, _, _, _ := server.getProjectPaths("")
+	cfg, err := config.LoadConfig(configDBPath)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	cfg.Keywords = "quantum"
+	err = config.SaveConfig(configDBPath, cfg)
+	if err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
 	// Trigger run pipeline
 	reqRun := httptest.NewRequest("POST", "/api/run-pipeline", nil)
 	wRun := httptest.NewRecorder()
@@ -450,5 +462,245 @@ func TestProjectsAndHistory(t *testing.T) {
 		t.Errorf("expected history revision, got 0")
 	} else if configResp.History[0].Label != "Project Created" {
 		t.Errorf("expected initial revision label 'Project Created', got %q", configResp.History[0].Label)
+	}
+}
+
+func TestOpenAlexTopicsRoute(t *testing.T) {
+	dbPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	server := NewAPIServer("localhost:8080", dbPath)
+	err := server.RegisterRoutes()
+	if err != nil {
+		t.Fatalf("RegisterRoutes failed: %v", err)
+	}
+
+	// Mock OpenAlex API serving group_by and topic details
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/works") {
+			fmt.Fprintln(w, `{"group_by":[{"key":"https://openalex.org/T10001","key_display_name":"Topic 1","count":10}],"meta":{"count":1,"next_cursor":""}}`)
+		} else if strings.Contains(r.URL.Path, "/topics/") {
+			fmt.Fprintln(w, `{"id":"https://openalex.org/T10001","display_name":"Topic 1","description":"Test Topic","keywords":["kw1"],"domain":{"display_name":"Domain 1"},"field":{"display_name":"Field 1"},"subfield":{"display_name":"Subfield 1"}}`)
+		}
+	}))
+	defer ts.Close()
+
+	// Redirect HTTP calls to test server
+	mockURL, _ := url.Parse(ts.URL)
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = &redirectTransport{targetURL: mockURL, origTransport: origTransport}
+	defer func() { http.DefaultTransport = origTransport }()
+
+	bodyJSON, _ := json.Marshal(map[string]interface{}{
+		"query":     "quantum",
+		"email":     "test@example.com",
+		"date_from": "2024-01-01",
+		"date_to":   "2024-12-31",
+		"details":   true,
+	})
+
+	req := httptest.NewRequest("POST", "/api/openalex/topics", bytes.NewBuffer(bodyJSON))
+	w := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected /api/openalex/topics status 200, got %d. Body: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		TotalTopics int `json:"total_topics"`
+		TotalPapers int `json:"total_papers"`
+		Topics      []struct {
+			TopicID     string  `json:"topic_id"`
+			DisplayName string  `json:"display_name"`
+			Description string  `json:"description"`
+			Count       int     `json:"paper_count"`
+			Percentage  float64 `json:"percentage"`
+		} `json:"topics"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	if resp.TotalTopics != 1 || resp.TotalPapers != 10 {
+		t.Errorf("unexpected summary count: %+v", resp)
+	}
+	if len(resp.Topics) != 1 || resp.Topics[0].TopicID != "T10001" || resp.Topics[0].DisplayName != "Topic 1" || resp.Topics[0].Description != "Test Topic" {
+		t.Errorf("unexpected topic: %+v", resp.Topics)
+	}
+}
+
+func TestOpenAlexCountRouteWithInvalidTopics(t *testing.T) {
+	dbPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	server := NewAPIServer("localhost:8080", dbPath)
+	err := server.RegisterRoutes()
+	if err != nil {
+		t.Fatalf("RegisterRoutes failed: %v", err)
+	}
+
+	// Mock OpenAlex API
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Check that the filter parameter does NOT contain "energy batteries" (only valid topics like T10012)
+		filterVal := r.URL.Query().Get("filter")
+		if strings.Contains(filterVal, "energy") || strings.Contains(filterVal, "batteries") {
+			t.Errorf("filter query contains unsanitized invalid topic: %q", filterVal)
+		}
+		fmt.Fprintln(w, `{"meta":{"count":123,"next_cursor":""},"results":[]}`)
+	}))
+	defer ts.Close()
+
+	mockURL, _ := url.Parse(ts.URL)
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = &redirectTransport{targetURL: mockURL, origTransport: origTransport}
+	defer func() { http.DefaultTransport = origTransport }()
+
+	bodyJSON, _ := json.Marshal(map[string]interface{}{
+		"query":  "battery",
+		"email":  "test@example.com",
+		"topics": []string{"energy batteries", "T10012"}, // "energy batteries" is invalid and should be filtered out
+	})
+
+	req := httptest.NewRequest("POST", "/api/openalex/count", bytes.NewBuffer(bodyJSON))
+	w := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestOpenAlexTopicsRouteWithInvalidTopics(t *testing.T) {
+	dbPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	server := NewAPIServer("localhost:8080", dbPath)
+	err := server.RegisterRoutes()
+	if err != nil {
+		t.Fatalf("RegisterRoutes failed: %v", err)
+	}
+
+	// Mock OpenAlex API
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		filterVal := r.URL.Query().Get("filter")
+		if strings.Contains(filterVal, "energy") || strings.Contains(filterVal, "batteries") {
+			t.Errorf("filter query contains unsanitized invalid topic: %q", filterVal)
+		}
+		if strings.Contains(r.URL.Path, "/works") {
+			fmt.Fprintln(w, `{"group_by":[{"key":"https://openalex.org/T10001","key_display_name":"Topic 1","count":10}],"meta":{"count":1,"next_cursor":""}}`)
+		} else if strings.Contains(r.URL.Path, "/topics/") {
+			fmt.Fprintln(w, `{"id":"https://openalex.org/T10001","display_name":"Topic 1","description":"Test Topic"}`)
+		}
+	}))
+	defer ts.Close()
+
+	mockURL, _ := url.Parse(ts.URL)
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = &redirectTransport{targetURL: mockURL, origTransport: origTransport}
+	defer func() { http.DefaultTransport = origTransport }()
+
+	bodyJSON, _ := json.Marshal(map[string]interface{}{
+		"query":  "battery",
+		"email":  "test@example.com",
+		"topics": []string{"energy batteries", "T10012"}, // "energy batteries" should be filtered out
+	})
+
+	req := httptest.NewRequest("POST", "/api/openalex/topics", bytes.NewBuffer(bodyJSON))
+	w := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestOpenAlexCountRouteWithInvalidQuery(t *testing.T) {
+	dbPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	server := NewAPIServer("localhost:8080", dbPath)
+	err := server.RegisterRoutes()
+	if err != nil {
+		t.Fatalf("RegisterRoutes failed: %v", err)
+	}
+
+	bodyJSON, _ := json.Marshal(map[string]interface{}{
+		"query": "(unbalanced", // invalid keywords query
+		"email": "test@example.com",
+	})
+
+	req := httptest.NewRequest("POST", "/api/openalex/count", bytes.NewBuffer(bodyJSON))
+	w := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400 for invalid query validation, got %d. Body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "Query validation failed") {
+		t.Errorf("expected error message to contain 'Query validation failed', got %s", w.Body.String())
+	}
+}
+
+func TestOpenAlexTopicsRouteWithInvalidQuery(t *testing.T) {
+	dbPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	server := NewAPIServer("localhost:8080", dbPath)
+	err := server.RegisterRoutes()
+	if err != nil {
+		t.Fatalf("RegisterRoutes failed: %v", err)
+	}
+
+	bodyJSON, _ := json.Marshal(map[string]interface{}{
+		"query": "(unbalanced", // invalid keywords query
+		"email": "test@example.com",
+	})
+
+	req := httptest.NewRequest("POST", "/api/openalex/topics", bytes.NewBuffer(bodyJSON))
+	w := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400 for invalid query validation, got %d. Body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "Query validation failed") {
+		t.Errorf("expected error message to contain 'Query validation failed', got %s", w.Body.String())
+	}
+}
+
+func TestPipelineRouteWithInvalidQuery(t *testing.T) {
+	dbPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	server := NewAPIServer("localhost:8080", dbPath)
+	err := server.RegisterRoutes()
+	if err != nil {
+		t.Fatalf("RegisterRoutes failed: %v", err)
+	}
+
+	// Set invalid keywords on the default configuration before running pipeline
+	configDBPath, _, _, _, _ := server.getProjectPaths("")
+	cfg, err := config.LoadConfig(configDBPath)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	cfg.Keywords = "(unbalanced" // invalid query
+	err = config.SaveConfig(configDBPath, cfg)
+	if err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	// Trigger run pipeline
+	reqRun := httptest.NewRequest("POST", "/api/run-pipeline", nil)
+	wRun := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(wRun, reqRun)
+
+	if wRun.Code != http.StatusBadRequest {
+		t.Errorf("expected /api/run-pipeline status 400 for invalid query validation, got %d. Body: %s", wRun.Code, wRun.Body.String())
+	}
+	if !strings.Contains(wRun.Body.String(), "Query validation failed") {
+		t.Errorf("expected error message to contain 'Query validation failed', got %s", wRun.Body.String())
 	}
 }

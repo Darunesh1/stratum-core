@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -86,6 +87,7 @@ func (s *APIServer) RegisterRoutes() error {
 	mux.HandleFunc("/api/tfidf", s.handleTFIDF)
 	mux.HandleFunc("/api/query/validate", s.handleQueryValidate)
 	mux.HandleFunc("/api/openalex/count", s.handleOpenAlexCount)
+	mux.HandleFunc("/api/openalex/topics", s.handleOpenAlexTopics)
 	mux.HandleFunc("/api/projects", s.handleListProjects)
 	mux.HandleFunc("/api/projects/create", s.handleCreateProject)
 
@@ -742,6 +744,24 @@ func (s *APIServer) handleRunPipeline(w http.ResponseWriter, r *http.Request) {
 	}
 
 	project := r.URL.Query().Get("project")
+	configDBPath, dbPath, jsonlDir, dbDir, _ := s.getProjectPaths(project)
+
+	// Validate configuration and query before starting pipeline
+	cfg, err := config.LoadConfig(configDBPath)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to load config: " + err.Error()})
+		return
+	}
+
+	if errs := openalex.ValidateKeywords(cfg.Keywords); len(errs) > 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Query validation failed: " + strings.Join(errs, "; ")})
+		return
+	}
+
 	status := s.getPipelineStatus(project)
 
 	s.mu.Lock()
@@ -760,13 +780,6 @@ func (s *APIServer) handleRunPipeline(w http.ResponseWriter, r *http.Request) {
 	s.addLog(project, "[INFO] Pipeline synchronization initiated by web client.")
 
 	go func() {
-		configDBPath, dbPath, jsonlDir, dbDir, _ := s.getProjectPaths(project)
-		cfg, err := config.LoadConfig(configDBPath)
-		if err != nil {
-			s.updateStatus(project, false, 0, "[ERROR] Failed to load config: "+err.Error())
-			return
-		}
-
 		cfg.Output.JSONLDir = jsonlDir
 		cfg.Output.DBDir = dbDir
 
@@ -1238,18 +1251,26 @@ func (s *APIServer) handleOpenAlexCount(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req struct {
-		Query    string   `json:"query"`
-		Keys     []string `json:"keys"`
-		Email    string   `json:"email"`
-		DateFrom string   `json:"date_from"`
-		DateTo   string   `json:"date_to"`
-		DocTypes []string `json:"doc_types"`
-		Topics   []string `json:"topics"`
+		Query        string   `json:"query"`
+		Keys         []string `json:"keys"`
+		Email        string   `json:"email"`
+		DateFrom     string   `json:"date_from"`
+		DateTo       string   `json:"date_to"`
+		DocTypes     []string `json:"doc_types"`
+		Topics       []string `json:"topics"`
+		CheckAnchors bool     `json:"check_anchors"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body: " + err.Error()})
+		return
+	}
+
+	// Validate query keywords
+	if errs := openalex.ValidateKeywords(req.Query); len(errs) > 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Query validation failed: " + strings.Join(errs, "; ")})
 		return
 	}
 
@@ -1268,8 +1289,14 @@ func (s *APIServer) handleOpenAlexCount(w http.ResponseWriter, r *http.Request) 
 
 	// Build the API filter query
 	parts := []string{"title_and_abstract.search:" + req.Query}
-	if len(req.Topics) > 0 {
-		parts = append(parts, "primary_topic.id:"+strings.Join(req.Topics, "|"))
+	var validTopics []string
+	for _, t := range req.Topics {
+		if openalex.ValidateTopicFormat(t) {
+			validTopics = append(validTopics, t)
+		}
+	}
+	if len(validTopics) > 0 {
+		parts = append(parts, "primary_topic.id:"+strings.Join(validTopics, "|"))
 	}
 	parts = append(parts, "from_publication_date:"+req.DateFrom)
 	parts = append(parts, "to_publication_date:"+req.DateTo)
@@ -1287,54 +1314,57 @@ func (s *APIServer) handleOpenAlexCount(w http.ResponseWriter, r *http.Request) 
 
 	// Load anchors from config
 	var anchors []string
-	project := r.URL.Query().Get("project")
-	configDBPath, _, _, _, _ := s.getProjectPaths(project)
-
-	cfg, err := config.LoadConfig(configDBPath)
-	if err == nil {
-		for _, a := range cfg.Anchors {
-			norm := normalizeDOI(a)
-			if norm != "" {
-				anchors = append(anchors, norm)
-			}
-		}
-	}
-
-	// Run anchor check coverage
 	var matchedCount int
 	var missingDOIs []string
-	if len(anchors) > 0 {
-		batchSize := 10
-		matchedSet := make(map[string]bool)
 
-		for i := 0; i < len(anchors); i += batchSize {
-			end := i + batchSize
-			if end > len(anchors) {
-				end = len(anchors)
-			}
-			batch := anchors[i:end]
-			batchFilter := strings.Join(batch, "|")
+	if req.CheckAnchors {
+		project := r.URL.Query().Get("project")
+		configDBPath, _, _, _, _ := s.getProjectPaths(project)
 
-			// Combine filter: queryFilter + ",doi:" + batchFilter
-			combinedFilter := filter + ",doi:" + batchFilter
-
-			// Query OpenAlex works for matching DOIs in this batch
-			resp, err := client.FetchPage(r.Context(), combinedFilter, "*")
-			if err == nil && resp != nil {
-				for _, w := range resp.Results {
-					norm := normalizeDOI(w.DOI)
-					if norm != "" {
-						matchedSet[norm] = true
-					}
+		cfg, err := config.LoadConfig(configDBPath)
+		if err == nil {
+			for _, a := range cfg.Anchors {
+				norm := normalizeDOI(a)
+				if norm != "" {
+					anchors = append(anchors, norm)
 				}
 			}
 		}
 
-		for _, doi := range anchors {
-			if matchedSet[doi] {
-				matchedCount++
-			} else {
-				missingDOIs = append(missingDOIs, doi)
+		// Run anchor check coverage
+		if len(anchors) > 0 {
+			batchSize := 10
+			matchedSet := make(map[string]bool)
+
+			for i := 0; i < len(anchors); i += batchSize {
+				end := i + batchSize
+				if end > len(anchors) {
+					end = len(anchors)
+				}
+				batch := anchors[i:end]
+				batchFilter := strings.Join(batch, "|")
+
+				// Combine filter: queryFilter + ",doi:" + batchFilter
+				combinedFilter := filter + ",doi:" + batchFilter
+
+				// Query OpenAlex works for matching DOIs in this batch
+				resp, err := client.FetchPage(r.Context(), combinedFilter, "*")
+				if err == nil && resp != nil {
+					for _, w := range resp.Results {
+						norm := normalizeDOI(w.DOI)
+						if norm != "" {
+							matchedSet[norm] = true
+						}
+					}
+				}
+			}
+
+			for _, doi := range anchors {
+				if matchedSet[doi] {
+					matchedCount++
+				} else {
+					missingDOIs = append(missingDOIs, doi)
+				}
 			}
 		}
 	}
@@ -1344,6 +1374,162 @@ func (s *APIServer) handleOpenAlexCount(w http.ResponseWriter, r *http.Request) 
 		"anchors_total":   len(anchors),
 		"anchors_matched": matchedCount,
 		"anchors_missing": missingDOIs,
+	})
+}
+
+func (s *APIServer) handleOpenAlexTopics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error": "Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Query    string   `json:"query"`
+		Keys     []string `json:"keys"`
+		Email    string   `json:"email"`
+		DateFrom string   `json:"date_from"`
+		DateTo   string   `json:"date_to"`
+		DocTypes []string `json:"doc_types"`
+		Topics   []string `json:"topics"`
+		Details  bool     `json:"details"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body: " + err.Error()})
+		return
+	}
+
+	// Validate query keywords
+	if errs := openalex.ValidateKeywords(req.Query); len(errs) > 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Query validation failed: " + strings.Join(errs, "; ")})
+		return
+	}
+
+	if req.Email == "" {
+		req.Email = "your@email.com"
+	}
+	if req.DateFrom == "" {
+		req.DateFrom = "2003-01-01"
+	}
+	if req.DateTo == "" {
+		req.DateTo = "2024-12-31"
+	}
+
+	// Instantiate client
+	client := openalex.NewClient(req.Keys, req.Email, 200, 4, 3, 1)
+
+	// Build the API filter query
+	parts := []string{"title_and_abstract.search:" + req.Query}
+	var validTopics []string
+	for _, t := range req.Topics {
+		if openalex.ValidateTopicFormat(t) {
+			validTopics = append(validTopics, t)
+		}
+	}
+	if len(validTopics) > 0 {
+		parts = append(parts, "primary_topic.id:"+strings.Join(validTopics, "|"))
+	}
+	parts = append(parts, "from_publication_date:"+req.DateFrom)
+	parts = append(parts, "to_publication_date:"+req.DateTo)
+	if len(req.DocTypes) > 0 {
+		parts = append(parts, "type:"+strings.Join(req.DocTypes, "|"))
+	}
+	filter := strings.Join(parts, ",")
+
+	// Fetch all topic groups using cursor pagination
+	var allGroups []openalex.GroupByItem
+	cursor := "*"
+	for {
+		resp, err := client.FetchGroupBy(r.Context(), filter, "primary_topic.id", cursor)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "OpenAlex request failed: " + err.Error()})
+			return
+		}
+		if resp == nil || len(resp.GroupBy) == 0 {
+			break
+		}
+		allGroups = append(allGroups, resp.GroupBy...)
+		if resp.Meta.NextCursor == "" || resp.Meta.NextCursor == cursor {
+			break
+		}
+		cursor = resp.Meta.NextCursor
+	}
+
+	// Sort groups by count descending
+	sort.Slice(allGroups, func(i, j int) bool {
+		return allGroups[i].Count > allGroups[j].Count
+	})
+
+	// Calculate total papers
+	var totalPapers int
+	for _, g := range allGroups {
+		totalPapers += g.Count
+	}
+
+	type EnrichedTopic struct {
+		TopicID     string   `json:"topic_id"`
+		DisplayName string   `json:"display_name"`
+		Description string   `json:"description"`
+		Keywords    []string `json:"keywords"`
+		Domain      string   `json:"domain"`
+		Field       string   `json:"field"`
+		Subfield    string   `json:"subfield"`
+		Count       int      `json:"paper_count"`
+		Percentage  float64  `json:"percentage"`
+	}
+
+	enriched := make([]EnrichedTopic, len(allGroups))
+	var wg sync.WaitGroup
+
+	for i, g := range allGroups {
+		wg.Add(1)
+		go func(idx int, item openalex.GroupByItem) {
+			defer wg.Done()
+
+			percentage := 0.0
+			if totalPapers > 0 {
+				percentage = float64(item.Count) / float64(totalPapers) * 100
+			}
+
+			topicID := item.Key
+			if lastSlash := strings.LastIndex(topicID, "/"); lastSlash != -1 {
+				topicID = topicID[lastSlash+1:]
+			}
+
+			eTopic := EnrichedTopic{
+				TopicID:     topicID,
+				DisplayName: item.KeyDisplayName,
+				Count:       item.Count,
+				Percentage:  percentage,
+			}
+
+			if req.Details {
+				details, err := client.FetchTopicDetails(r.Context(), topicID)
+				if err == nil && details != nil {
+					if details.DisplayName != "" {
+						eTopic.DisplayName = details.DisplayName
+					}
+					eTopic.Description = details.Description
+					eTopic.Keywords = details.Keywords
+					eTopic.Domain = details.Domain.DisplayName
+					eTopic.Field = details.Field.DisplayName
+					eTopic.Subfield = details.Subfield.DisplayName
+				}
+			}
+
+			enriched[idx] = eTopic
+		}(i, g)
+	}
+	wg.Wait()
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"total_topics": len(allGroups),
+		"total_papers": totalPapers,
+		"topics":       enriched,
 	})
 }
 
