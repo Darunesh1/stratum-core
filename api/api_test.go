@@ -347,6 +347,18 @@ func TestPipelineRoutes(t *testing.T) {
 	http.DefaultTransport = &redirectTransport{targetURL: mockURL, origTransport: origTransport}
 	defer func() { http.DefaultTransport = origTransport }()
 
+	// Set valid keywords on the default configuration before running pipeline
+	configDBPath, _, _, _, _ := server.getProjectPaths("")
+	cfg, err := config.LoadConfig(configDBPath)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	cfg.Keywords = "quantum"
+	err = config.SaveConfig(configDBPath, cfg)
+	if err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
 	// Trigger run pipeline
 	reqRun := httptest.NewRequest("POST", "/api/run-pipeline", nil)
 	wRun := httptest.NewRecorder()
@@ -601,5 +613,94 @@ func TestOpenAlexTopicsRouteWithInvalidTopics(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestOpenAlexCountRouteWithInvalidQuery(t *testing.T) {
+	dbPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	server := NewAPIServer("localhost:8080", dbPath)
+	err := server.RegisterRoutes()
+	if err != nil {
+		t.Fatalf("RegisterRoutes failed: %v", err)
+	}
+
+	bodyJSON, _ := json.Marshal(map[string]interface{}{
+		"query": "(unbalanced", // invalid keywords query
+		"email": "test@example.com",
+	})
+
+	req := httptest.NewRequest("POST", "/api/openalex/count", bytes.NewBuffer(bodyJSON))
+	w := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400 for invalid query validation, got %d. Body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "Query validation failed") {
+		t.Errorf("expected error message to contain 'Query validation failed', got %s", w.Body.String())
+	}
+}
+
+func TestOpenAlexTopicsRouteWithInvalidQuery(t *testing.T) {
+	dbPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	server := NewAPIServer("localhost:8080", dbPath)
+	err := server.RegisterRoutes()
+	if err != nil {
+		t.Fatalf("RegisterRoutes failed: %v", err)
+	}
+
+	bodyJSON, _ := json.Marshal(map[string]interface{}{
+		"query": "(unbalanced", // invalid keywords query
+		"email": "test@example.com",
+	})
+
+	req := httptest.NewRequest("POST", "/api/openalex/topics", bytes.NewBuffer(bodyJSON))
+	w := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400 for invalid query validation, got %d. Body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "Query validation failed") {
+		t.Errorf("expected error message to contain 'Query validation failed', got %s", w.Body.String())
+	}
+}
+
+func TestPipelineRouteWithInvalidQuery(t *testing.T) {
+	dbPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	server := NewAPIServer("localhost:8080", dbPath)
+	err := server.RegisterRoutes()
+	if err != nil {
+		t.Fatalf("RegisterRoutes failed: %v", err)
+	}
+
+	// Set invalid keywords on the default configuration before running pipeline
+	configDBPath, _, _, _, _ := server.getProjectPaths("")
+	cfg, err := config.LoadConfig(configDBPath)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	cfg.Keywords = "(unbalanced" // invalid query
+	err = config.SaveConfig(configDBPath, cfg)
+	if err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	// Trigger run pipeline
+	reqRun := httptest.NewRequest("POST", "/api/run-pipeline", nil)
+	wRun := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(wRun, reqRun)
+
+	if wRun.Code != http.StatusBadRequest {
+		t.Errorf("expected /api/run-pipeline status 400 for invalid query validation, got %d. Body: %s", wRun.Code, wRun.Body.String())
+	}
+	if !strings.Contains(wRun.Body.String(), "Query validation failed") {
+		t.Errorf("expected error message to contain 'Query validation failed', got %s", wRun.Body.String())
 	}
 }

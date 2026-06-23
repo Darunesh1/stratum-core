@@ -744,6 +744,24 @@ func (s *APIServer) handleRunPipeline(w http.ResponseWriter, r *http.Request) {
 	}
 
 	project := r.URL.Query().Get("project")
+	configDBPath, dbPath, jsonlDir, dbDir, _ := s.getProjectPaths(project)
+
+	// Validate configuration and query before starting pipeline
+	cfg, err := config.LoadConfig(configDBPath)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to load config: " + err.Error()})
+		return
+	}
+
+	if errs := openalex.ValidateKeywords(cfg.Keywords); len(errs) > 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Query validation failed: " + strings.Join(errs, "; ")})
+		return
+	}
+
 	status := s.getPipelineStatus(project)
 
 	s.mu.Lock()
@@ -762,13 +780,6 @@ func (s *APIServer) handleRunPipeline(w http.ResponseWriter, r *http.Request) {
 	s.addLog(project, "[INFO] Pipeline synchronization initiated by web client.")
 
 	go func() {
-		configDBPath, dbPath, jsonlDir, dbDir, _ := s.getProjectPaths(project)
-		cfg, err := config.LoadConfig(configDBPath)
-		if err != nil {
-			s.updateStatus(project, false, 0, "[ERROR] Failed to load config: "+err.Error())
-			return
-		}
-
 		cfg.Output.JSONLDir = jsonlDir
 		cfg.Output.DBDir = dbDir
 
@@ -1240,18 +1251,26 @@ func (s *APIServer) handleOpenAlexCount(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req struct {
-		Query    string   `json:"query"`
-		Keys     []string `json:"keys"`
-		Email    string   `json:"email"`
-		DateFrom string   `json:"date_from"`
-		DateTo   string   `json:"date_to"`
-		DocTypes []string `json:"doc_types"`
-		Topics   []string `json:"topics"`
+		Query        string   `json:"query"`
+		Keys         []string `json:"keys"`
+		Email        string   `json:"email"`
+		DateFrom     string   `json:"date_from"`
+		DateTo       string   `json:"date_to"`
+		DocTypes     []string `json:"doc_types"`
+		Topics       []string `json:"topics"`
+		CheckAnchors bool     `json:"check_anchors"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body: " + err.Error()})
+		return
+	}
+
+	// Validate query keywords
+	if errs := openalex.ValidateKeywords(req.Query); len(errs) > 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Query validation failed: " + strings.Join(errs, "; ")})
 		return
 	}
 
@@ -1295,57 +1314,61 @@ func (s *APIServer) handleOpenAlexCount(w http.ResponseWriter, r *http.Request) 
 
 	// Load anchors from config
 	var anchors []string
-	project := r.URL.Query().Get("project")
-	configDBPath, _, _, _, _ := s.getProjectPaths(project)
-
-	cfg, err := config.LoadConfig(configDBPath)
-	if err == nil {
-		for _, a := range cfg.Anchors {
-			norm := normalizeDOI(a)
-			if norm != "" {
-				anchors = append(anchors, norm)
-			}
-		}
-	}
-
-	// Run anchor check coverage
 	var matchedCount int
 	var missingDOIs []string
-	if len(anchors) > 0 {
-		batchSize := 10
-		matchedSet := make(map[string]bool)
 
-		for i := 0; i < len(anchors); i += batchSize {
-			end := i + batchSize
-			if end > len(anchors) {
-				end = len(anchors)
-			}
-			batch := anchors[i:end]
-			batchFilter := strings.Join(batch, "|")
+	if req.CheckAnchors {
+		project := r.URL.Query().Get("project")
+		configDBPath, _, _, _, _ := s.getProjectPaths(project)
 
-			// Combine filter: queryFilter + ",doi:" + batchFilter
-			combinedFilter := filter + ",doi:" + batchFilter
-
-			// Query OpenAlex works for matching DOIs in this batch
-			resp, err := client.FetchPage(r.Context(), combinedFilter, "*")
-			if err == nil && resp != nil {
-				for _, w := range resp.Results {
-					norm := normalizeDOI(w.DOI)
-					if norm != "" {
-						matchedSet[norm] = true
-					}
+		cfg, err := config.LoadConfig(configDBPath)
+		if err == nil {
+			for _, a := range cfg.Anchors {
+				norm := normalizeDOI(a)
+				if norm != "" {
+					anchors = append(anchors, norm)
 				}
 			}
 		}
 
-		for _, doi := range anchors {
-			if matchedSet[doi] {
-				matchedCount++
-			} else {
-				missingDOIs = append(missingDOIs, doi)
+		// Run anchor check coverage
+		if len(anchors) > 0 {
+			batchSize := 10
+			matchedSet := make(map[string]bool)
+
+			for i := 0; i < len(anchors); i += batchSize {
+				end := i + batchSize
+				if end > len(anchors) {
+					end = len(anchors)
+				}
+				batch := anchors[i:end]
+				batchFilter := strings.Join(batch, "|")
+
+				// Combine filter: queryFilter + ",doi:" + batchFilter
+				combinedFilter := filter + ",doi:" + batchFilter
+
+				// Query OpenAlex works for matching DOIs in this batch
+				resp, err := client.FetchPage(r.Context(), combinedFilter, "*")
+				if err == nil && resp != nil {
+					for _, w := range resp.Results {
+						norm := normalizeDOI(w.DOI)
+						if norm != "" {
+							matchedSet[norm] = true
+						}
+					}
+				}
+			}
+
+			for _, doi := range anchors {
+				if matchedSet[doi] {
+					matchedCount++
+				} else {
+					missingDOIs = append(missingDOIs, doi)
+				}
 			}
 		}
 	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"count":           count,
 		"anchors_total":   len(anchors),
@@ -1375,6 +1398,13 @@ func (s *APIServer) handleOpenAlexTopics(w http.ResponseWriter, r *http.Request)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body: " + err.Error()})
+		return
+	}
+
+	// Validate query keywords
+	if errs := openalex.ValidateKeywords(req.Query); len(errs) > 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Query validation failed: " + strings.Join(errs, "; ")})
 		return
 	}
 

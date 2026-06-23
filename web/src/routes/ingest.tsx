@@ -100,6 +100,7 @@ export function Ingest() {
   const [anchorsTotal, setAnchorsTotal] = useState<number | null>(null)
   const [anchorsMatched, setAnchorsMatched] = useState<number | null>(null)
   const [anchorsMissing, setAnchorsMissing] = useState<string[]>([])
+  const [checkAnchors, setCheckAnchors] = useState(true)
 
   // OpenAlex Topics States
   interface OpenAlexTopic {
@@ -433,6 +434,7 @@ export function Ingest() {
           date_to: dateTo,
           doc_types: docTypesList,
           topics: topicsList,
+          check_anchors: checkAnchors,
         }),
       })
 
@@ -447,11 +449,19 @@ export function Ingest() {
         const matched = data.anchors_matched || 0
         const total = data.anchors_total || 0
 
-        addToast(
-          'success',
-          'Search Count Completed',
-          `Found ${countVal.toLocaleString()} papers. Anchor match: ${matched}/${total}.`,
-        )
+        if (total > 0) {
+          addToast(
+            'success',
+            'Search Count Completed',
+            `Found ${countVal.toLocaleString()} papers. Anchor match: ${matched}/${total}.`,
+          )
+        } else {
+          addToast(
+            'success',
+            'Search Count Completed',
+            `Found ${countVal.toLocaleString()} papers.`,
+          )
+        }
         sendNotification(
           'Stratum: Search Completed',
           `Estimated papers matching keywords: ${countVal.toLocaleString()}. Anchor match: ${matched}/${total}.`,
@@ -975,7 +985,11 @@ export function Ingest() {
                   id="keywords-input"
                   disabled={saving}
                   value={keywords}
-                  onChange={(e) => setKeywords(e.target.value)}
+                  onChange={(e) => {
+                    setKeywords(e.target.value)
+                    setQueryValid(null)
+                    setQueryErrors([])
+                  }}
                   className="w-full h-64 p-4 border border-zinc-200 dark:border-zinc-800 bg-zinc-950 text-zinc-300 font-mono text-xs leading-relaxed focus:outline-none focus:ring-0 rounded"
                   placeholder="Enter boolean query using OR / AND / NOT operators..."
                 />
@@ -1070,7 +1084,7 @@ export function Ingest() {
                 </div>
                 <button
                   type="submit"
-                  disabled={saving}
+                  disabled={saving || queryValid === false}
                   className="flex items-center justify-center gap-2 px-5 py-2.5 border rounded font-mono text-xs font-bold uppercase tracking-wider select-none transition-all cursor-pointer bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-800 hover:bg-zinc-800 dark:hover:bg-zinc-200 disabled:opacity-50 self-end sm:self-center shrink-0"
                 >
                   {saving ? (
@@ -1283,7 +1297,7 @@ export function Ingest() {
                 </div>
                 <button
                   type="submit"
-                  disabled={saving}
+                  disabled={saving || queryValid === false}
                   className="flex items-center justify-center gap-2 px-5 py-2.5 border rounded font-mono text-xs font-bold uppercase tracking-wider select-none transition-all cursor-pointer bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-800 hover:bg-zinc-800 dark:hover:bg-zinc-200 disabled:opacity-50 self-end sm:self-center shrink-0"
                 >
                   {saving ? (
@@ -1373,6 +1387,18 @@ export function Ingest() {
                     Query the live OpenAlex API using current search keywords, filters, and anchor DOIs to estimate total papers.
                   </p>
 
+                  <div className="flex items-center gap-2 mt-1">
+                    <label className="flex items-center gap-2 cursor-pointer select-none font-mono text-[10px] text-zinc-500 font-bold uppercase">
+                      <input
+                        type="checkbox"
+                        checked={checkAnchors}
+                        onChange={() => setCheckAnchors((prev) => !prev)}
+                        className="rounded border-zinc-300 dark:border-zinc-800 text-zinc-900 focus:ring-0 cursor-pointer"
+                      />
+                      <span>Validate Anchor Paper Coverage</span>
+                    </label>
+                  </div>
+
                   {/* Count badge */}
                   <div className="min-h-[6rem] py-4 px-3 border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/10 rounded flex flex-col items-center justify-center gap-1 mt-1">
                     {checkingCount ? (
@@ -1437,7 +1463,7 @@ export function Ingest() {
                 <button
                   type="button"
                   onClick={handleGetOpenAlexCount}
-                  disabled={checkingCount || checkingTopics || !keywords.trim()}
+                  disabled={checkingCount || checkingTopics || !keywords.trim() || queryValid === false}
                   className="w-full flex items-center justify-center gap-2 px-3 py-2 border rounded font-mono text-xs font-bold uppercase bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-800 hover:bg-zinc-800 dark:hover:bg-zinc-200 disabled:opacity-50 cursor-pointer"
                 >
                   {checkingCount ? (
@@ -1490,7 +1516,7 @@ export function Ingest() {
                 <button
                   type="button"
                   onClick={handleGetOpenAlexTopics}
-                  disabled={checkingCount || checkingTopics || !keywords.trim()}
+                  disabled={checkingCount || checkingTopics || !keywords.trim() || queryValid === false}
                   className="w-full flex items-center justify-center gap-2 px-3 py-2 border rounded font-mono text-xs font-bold uppercase bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-800 hover:bg-zinc-800 dark:hover:bg-zinc-200 disabled:opacity-50 cursor-pointer"
                 >
                   {checkingTopics ? (
