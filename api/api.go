@@ -903,12 +903,13 @@ func (s *APIServer) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract headers
+	// Extract headers and row count
 	var headers []string
+	var rowCount int
 	if ext == ".csv" {
-		headers, err = parseCSVHeaders(filePath)
+		headers, rowCount, err = parseCSVHeadersAndCount(filePath)
 	} else {
-		headers, err = parseExcelHeaders(filePath)
+		headers, rowCount, err = parseExcelHeadersAndCount(filePath)
 	}
 
 	if err != nil {
@@ -918,9 +919,63 @@ func (s *APIServer) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"filename": safeName,
-		"columns":  headers,
+		"filename":  safeName,
+		"columns":   headers,
+		"row_count": rowCount,
 	})
+}
+
+func parseCSVHeadersAndCount(filePath string) ([]string, int, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer f.Close()
+
+	reader := csv.NewReader(f)
+	reader.LazyQuotes = true
+	reader.FieldsPerRecord = -1
+	
+	rows, err := reader.ReadAll()
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(rows) == 0 {
+		return nil, 0, fmt.Errorf("empty file")
+	}
+	return rows[0], len(rows) - 1, nil // subtract header row
+}
+
+func parseExcelHeadersAndCount(filePath string) ([]string, int, error) {
+	if strings.HasSuffix(strings.ToLower(filePath), ".xls") {
+		rows, err := parseXLSRows(filePath)
+		if err != nil {
+			return nil, 0, err
+		}
+		if len(rows) == 0 {
+			return nil, 0, fmt.Errorf("empty sheet")
+		}
+		return rows[0], len(rows) - 1, nil
+	}
+
+	f, err := excelize.OpenFile(filePath)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer f.Close()
+
+	sheets := f.GetSheetList()
+	if len(sheets) == 0 {
+		return nil, 0, fmt.Errorf("no sheets found in Excel file")
+	}
+	rows, err := f.GetRows(sheets[0])
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(rows) == 0 {
+		return nil, 0, fmt.Errorf("empty sheet")
+	}
+	return rows[0], len(rows) - 1, nil
 }
 
 func parseCSVHeaders(filePath string) ([]string, error) {
