@@ -360,6 +360,7 @@ export function Ingest() {
   const [uploadSuccess, setUploadSuccess] = useState(false)
   const [uploadedFilename, setUploadedFilename] = useState('')
   const [columns, setColumns] = useState<string[]>([])
+  const [rowCount, setRowCount] = useState<number | null>(null)
   const [selectedTitleCol, setSelectedTitleCol] = useState('')
   const [selectedAbstractCol, setSelectedAbstractCol] = useState('')
   const [selectedDoiCol, setSelectedDoiCol] = useState('')
@@ -562,6 +563,7 @@ export function Ingest() {
         const data = await response.json()
         setUploadedFilename(data.filename)
         setColumns(data.columns || [])
+        setRowCount(data.row_count !== undefined ? data.row_count : null)
         setUploadSuccess(true)
 
         // Guess columns
@@ -1177,7 +1179,7 @@ export function Ingest() {
                 </div>
                 {uploadSuccess && (
                   <span className="text-[10px] font-mono text-green-600 dark:text-green-400 flex items-center gap-1">
-                    <Check className="h-3 w-3" /> Catalog parsed. {columns.length} columns detected.
+                    <Check className="h-3 w-3" /> Catalog parsed. {rowCount !== null ? `${rowCount.toLocaleString()} rows and ` : ''}{columns.length} columns detected.
                   </span>
                 )}
               </div>
