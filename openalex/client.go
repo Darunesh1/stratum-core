@@ -124,6 +124,12 @@ type WorkPageResponse struct {
 	Results []Work       `json:"results"`
 }
 
+// RawPageResponse wraps metadata and results as raw JSON messages to fetch full paper records.
+type RawPageResponse struct {
+	Meta    MetaResponse      `json:"meta"`
+	Results []json.RawMessage `json:"results"`
+}
+
 type MetaResponse struct {
 	Count      int    `json:"count"`
 	NextCursor string `json:"next_cursor"`
@@ -379,6 +385,34 @@ func (c *OpenAlexClient) FetchPage(ctx context.Context, apiFilter string, cursor
 	return &resp, nil
 }
 
+// FetchPageRaw retrieves a single page of results for a given filter and cursor, returning the raw JSON response body.
+func (c *OpenAlexClient) FetchPageRaw(ctx context.Context, apiFilter string, cursor string) ([]byte, error) {
+	baseURL := c.baseURL
+	if baseURL == "" {
+		baseURL = "https://api.openalex.org"
+	}
+	u, err := url.Parse(baseURL + "/works")
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	q.Set("filter", apiFilter)
+	q.Set("per_page", fmt.Sprintf("%d", c.perPage))
+	q.Set("cursor", cursor)
+	// We omit the 'select' query parameter to download the full records
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	c.semaphore <- struct{}{}
+	defer func() { <-c.semaphore }()
+
+	return c.doRequest(ctx, req)
+}
+
 type DownloadProgress struct {
 	Batches map[string]*BatchProgress `json:"batches"`
 }
@@ -631,24 +665,26 @@ func (c *OpenAlexClient) processBatch(
 		default:
 		}
 
-		resp, err := c.FetchPage(ctx, filterStr, cursor)
+		resp, err := c.FetchPageRaw(ctx, filterStr, cursor)
 		if err != nil {
 			aborted = true
 			break
 		}
 
-		if len(resp.Results) == 0 {
+		var pageResp RawPageResponse
+		if err := json.Unmarshal(resp, &pageResp); err != nil {
+			aborted = true
 			break
 		}
 
-		nextCursor := resp.Meta.NextCursor
+		if len(pageResp.Results) == 0 {
+			break
+		}
 
-		for _, paper := range resp.Results {
-			data, err := json.Marshal(paper)
-			if err != nil {
-				continue
-			}
-			if err := writer.WriteLine(data); err != nil {
+		nextCursor := pageResp.Meta.NextCursor
+
+		for _, paper := range pageResp.Results {
+			if err := writer.WriteLine(paper); err != nil {
 				return err
 			}
 			atomic.AddInt64(collectedCount, 1)

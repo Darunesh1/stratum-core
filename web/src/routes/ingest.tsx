@@ -23,6 +23,7 @@ import {
   Plus,
   Trash2,
   Download,
+  Terminal,
 } from 'lucide-react'
 
 interface ScoredKeyword {
@@ -508,6 +509,98 @@ export function Ingest() {
   const [openalexTopicsTotal, setOpenalexTopicsTotal] = useState<number | null>(null)
   const [openalexTopicsTotalPapers, setOpenalexTopicsTotalPapers] = useState<number | null>(null)
   const [showAllTopics, setShowAllTopics] = useState(false)
+
+  // Pipeline Sync States
+  const [syncing, setSyncing] = useState(false)
+  const [pipelineProgress, setPipelineProgress] = useState(0)
+  const [pipelineLogs, setPipelineLogs] = useState<string[]>([])
+  const consoleBottomRef = useRef<HTMLDivElement | null>(null)
+
+  // 1. Initial Status Check
+  useEffect(() => {
+    const checkInitialStatus = async () => {
+      if (!activeProject) return
+      try {
+        const response = await fetch(`/api/pipeline/status?project=${activeProject}`)
+        if (response.ok) {
+          const data = await response.json()
+          setSyncing(data.syncing)
+          setPipelineProgress(data.progress)
+          setPipelineLogs(data.logs || [])
+        }
+      } catch (err) {
+        console.error('Failed to load initial status:', err)
+      }
+    }
+
+    checkInitialStatus()
+  }, [activeProject])
+
+  // 2. Poll Pipeline Status periodically when Syncing
+  useEffect(() => {
+    let intervalId: ReturnType<typeof setInterval> | null = null
+
+    const checkStatus = async () => {
+      if (!activeProject) return
+      try {
+        const response = await fetch(`/api/pipeline/status?project=${activeProject}`)
+        if (response.ok) {
+          const data = await response.json()
+          setSyncing(data.syncing)
+          setPipelineProgress(data.progress)
+          setPipelineLogs(data.logs || [])
+
+          if (!data.syncing) {
+            if (intervalId) clearInterval(intervalId)
+          }
+        }
+      } catch (err) {
+        console.error('Failed to poll status:', err)
+      }
+    }
+
+    if (syncing) {
+      intervalId = setInterval(checkStatus, 1000)
+    } else {
+      if (intervalId) clearInterval(intervalId)
+    }
+
+    return () => {
+      if (intervalId) clearInterval(intervalId)
+    }
+  }, [syncing, activeProject])
+
+  // Auto-scroll logs to bottom
+  useEffect(() => {
+    if (consoleBottomRef.current) {
+      consoleBottomRef.current.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [pipelineLogs])
+
+  const handleSyncToggle = async () => {
+    if (syncing) {
+      alert('Pipeline execution running in Go background thread. Waiting for completion.')
+      return
+    }
+
+    setSyncing(true)
+    setPipelineProgress(0)
+    setPipelineLogs([
+      '[' + new Date().toLocaleTimeString() + '] [INFO] Requesting pipeline sync from backend...',
+    ])
+
+    try {
+      const response = await fetch(`/api/run-pipeline?project=${activeProject}`, { method: 'POST' })
+      if (!response.ok) {
+        const data = await response.json()
+        alert(data.error || 'Failed to start pipeline')
+        setSyncing(false)
+      }
+    } catch (err: unknown) {
+      alert('Connection failed: ' + (err instanceof Error ? err.message : String(err)))
+      setSyncing(false)
+    }
+  }
 
   const selectedTopicsList = useMemo(() => {
     return topics
@@ -1987,6 +2080,89 @@ export function Ingest() {
                   )}
                   Get Topic Distribution
                 </button>
+              </div>
+            </div>
+
+            {/* FULL-WIDTH ROW: Sync Diagnostics Console (cols: 12) */}
+            <div className="lg:col-span-12 flex flex-col gap-4 border border-zinc-200 dark:border-zinc-800 p-5 rounded mt-2 w-full bg-white dark:bg-zinc-950/10">
+              <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-3 flex-wrap gap-3">
+                <div className="flex flex-col gap-1">
+                  <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-50 flex items-center gap-2">
+                    <Terminal className="h-4 w-4 text-zinc-500" />
+                    Ingestion Pipeline & Sync Diagnostics
+                  </h3>
+                  <p className="text-[11px] text-zinc-400 font-sans">
+                    Execute the OpenAlex ingestion pipeline for the active configuration, download publications, and populate the DuckDB database.
+                  </p>
+                </div>
+                <div>
+                  <button
+                    type="button"
+                    onClick={handleSyncToggle}
+                    className={`flex items-center gap-2 px-4 py-2 rounded font-mono text-xs font-bold uppercase border transition-all ${
+                      syncing
+                        ? 'bg-zinc-200 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-zinc-500 hover:bg-zinc-350 dark:hover:bg-zinc-700 cursor-not-allowed'
+                        : 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-800 dark:border-zinc-200 hover:bg-zinc-800 dark:hover:bg-zinc-200 cursor-pointer shadow-sm'
+                    }`}
+                  >
+                    {syncing ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <span>Syncing Pipeline...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play className="h-3.5 w-3.5 fill-current" />
+                        <span>Run OpenAlex Sync</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Console Progress Bar */}
+              {(syncing || pipelineProgress > 0) && (
+                <div className="h-1.5 w-full bg-zinc-150 dark:bg-zinc-900 rounded overflow-hidden">
+                  <div
+                    className="h-full bg-zinc-900 dark:bg-zinc-100 transition-all duration-300 ease-out"
+                    style={{ width: `${Math.min(pipelineProgress, 100)}%` }}
+                  ></div>
+                </div>
+              )}
+
+              {/* Console Terminal Screen */}
+              <div className="bg-zinc-950 text-zinc-300 p-4 h-64 overflow-y-auto font-mono text-[11px] leading-relaxed flex flex-col gap-1 rounded border border-zinc-900 select-text">
+                {pipelineLogs.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-zinc-650 select-none">
+                    <span>Diagnostics Console Idle. Click "Run OpenAlex Sync" to initiate.</span>
+                  </div>
+                ) : (
+                  <>
+                    {pipelineLogs.map((log, index) => (
+                      <div
+                        key={index}
+                        className={
+                          log.includes('[SUCCESS]')
+                            ? 'text-emerald-400'
+                            : log.includes('[ERROR]')
+                              ? 'text-rose-400 animate-pulse'
+                              : log.includes('[INFO]')
+                                ? 'text-zinc-500'
+                                : ''
+                        }
+                      >
+                        {log}
+                      </div>
+                    ))}
+                    {pipelineProgress >= 100 && (
+                      <div className="text-emerald-400 font-bold flex items-center gap-1.5 mt-1">
+                        <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+                        <span>[SUCCESS] Database sync completed successfully. All services ready.</span>
+                      </div>
+                    )}
+                    <div ref={consoleBottomRef}></div>
+                  </>
+                )}
               </div>
             </div>
 

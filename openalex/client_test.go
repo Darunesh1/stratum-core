@@ -2,6 +2,7 @@ package openalex
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -143,6 +144,44 @@ func TestFetchPage(t *testing.T) {
 		t.Errorf("unexpected results: %+v", resp.Results)
 	}
 }
+
+func TestFetchPageRaw(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintln(w, `{"meta":{"count":1,"next_cursor":"raw_cursor_val"},"results":[{"id":"W2","title":"title2","extra_field":"some_val"}]}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(nil, "test@example.com", 200, 2, 2, 1)
+	client.baseURL = server.URL
+
+	body, err := client.FetchPageRaw(context.Background(), "filter", "*")
+	if err != nil {
+		t.Fatalf("FetchPageRaw failed: %v", err)
+	}
+
+	var resp RawPageResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if resp.Meta.Count != 1 || resp.Meta.NextCursor != "raw_cursor_val" {
+		t.Errorf("unexpected meta: %+v", resp.Meta)
+	}
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(resp.Results))
+	}
+
+	var rawMap map[string]interface{}
+	if err := json.Unmarshal(resp.Results[0], &rawMap); err != nil {
+		t.Fatalf("failed to unmarshal RawMessage: %v", err)
+	}
+
+	if rawMap["id"] != "W2" || rawMap["title"] != "title2" || rawMap["extra_field"] != "some_val" {
+		t.Errorf("unexpected raw work content: %v", rawMap)
+	}
+}
+
 
 func TestValidateTopicsExist(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
