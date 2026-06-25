@@ -59,6 +59,7 @@ interface SearchableListEditorProps {
   placeholder: string
   disabled?: boolean
   maxCollapsedItems?: number
+  validate?: (val: string) => { valid: boolean; error?: string; normalized?: string }
 }
 
 function SearchableListEditor({
@@ -69,11 +70,18 @@ function SearchableListEditor({
   placeholder,
   disabled,
   maxCollapsedItems = 10,
+  validate,
 }: SearchableListEditorProps) {
   const [activeTab, setActiveTab] = useState<'list' | 'raw'>('list')
   const [searchQuery, setSearchQuery] = useState('')
   const [newItem, setNewItem] = useState('')
   const [isExpanded, setIsExpanded] = useState(false)
+  const [validationError, setValidationError] = useState<string | null>(null)
+
+  // Clear validation error when user types a new value, toggles tabs, or changes expanded state
+  useEffect(() => {
+    setValidationError(null)
+  }, [newItem, activeTab, isExpanded])
 
   // Parse lines
   const items = useMemo(() => {
@@ -90,15 +98,37 @@ function SearchableListEditor({
     )
   }, [items, searchQuery])
 
-  const handleAddItem = (e: React.FormEvent) => {
-    e.preventDefault()
+  const invalidLines = useMemo(() => {
+    if (!validate) return []
+    return value
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => !validate(line).valid)
+  }, [value, validate])
+
+  const handleAddItem = (e?: React.FormEvent | React.KeyboardEvent) => {
+    if (e) e.preventDefault()
     const cleaned = newItem.trim()
     if (!cleaned) return
-    if (items.includes(cleaned)) {
+
+    let itemToAdd = cleaned
+    if (validate) {
+      const res = validate(cleaned)
+      if (!res.valid) {
+        setValidationError(res.error || 'Invalid format')
+        return
+      }
+      itemToAdd = res.normalized || cleaned
+    }
+
+    setValidationError(null)
+
+    if (items.includes(itemToAdd)) {
       setNewItem('')
       return // Avoid duplicates if already present
     }
-    const newValue = [...items, cleaned].join('\n')
+    const newValue = [...items, itemToAdd].join('\n')
     onChange(newValue)
     setNewItem('')
   }
@@ -112,6 +142,19 @@ function SearchableListEditor({
     if (window.confirm(`Are you sure you want to clear all ${label.toLowerCase()}?`)) {
       onChange('')
     }
+  }
+
+  const handleRawBlur = () => {
+    if (!validate) return
+    const normalizedLines = value
+      .split('\n')
+      .map((line) => {
+        const trimmed = line.trim()
+        if (!trimmed) return ''
+        const res = validate(trimmed)
+        return res.valid ? (res.normalized || trimmed) : line
+      })
+    onChange(normalizedLines.join('\n'))
   }
 
   const EditorContent = (isModal: boolean) => {
@@ -188,7 +231,7 @@ function SearchableListEditor({
                   <button
                     type="button"
                     onClick={() => setSearchQuery('')}
-                    className="absolute inset-y-0 right-0 flex items-center pr-2.5 text-zinc-450 hover:text-zinc-650 dark:hover:text-zinc-200 cursor-pointer"
+                    className="absolute inset-y-0 right-0 flex items-center pr-2.5 text-zinc-455 hover:text-zinc-650 dark:hover:text-zinc-200 cursor-pointer"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -196,22 +239,37 @@ function SearchableListEditor({
               </div>
 
               {/* Quick Add */}
-              <form onSubmit={handleAddItem} className="flex gap-1">
+              <div className="flex gap-1">
                 <input
                   type="text"
                   value={newItem}
                   onChange={(e) => setNewItem(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      handleAddItem(e)
+                    }
+                  }}
                   placeholder="Add item..."
                   className="w-32 px-3 py-1.5 border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 rounded font-mono text-xs focus:outline-none"
                 />
                 <button
-                  type="submit"
+                  type="button"
+                  onClick={(e) => handleAddItem(e)}
                   className="flex items-center justify-center p-1.5 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-850 rounded hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-350 cursor-pointer"
                 >
                   <Plus className="h-3.5 w-3.5" />
                 </button>
-              </form>
+              </div>
             </div>
+
+            {/* Validation Error Message */}
+            {validationError && (
+              <div className="text-[11px] font-mono text-red-500 dark:text-red-400 flex items-center gap-1.5 px-1 py-0.5">
+                <AlertCircle className="h-3.5 w-3.5 animate-pulse" />
+                <span>{validationError}</span>
+              </div>
+            )}
 
             {/* List display */}
             <div
@@ -264,11 +322,23 @@ function SearchableListEditor({
               disabled={disabled}
               value={value}
               onChange={(e) => onChange(e.target.value)}
+              onBlur={handleRawBlur}
               className={`w-full p-3 border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/10 font-mono text-xs leading-relaxed focus:outline-none rounded resize-none flex-1 ${
                 isModal ? 'h-[400px]' : 'h-40'
               }`}
               placeholder={placeholder}
             />
+            {invalidLines.length > 0 && (
+              <div className="mt-2 p-2 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50 rounded flex flex-col gap-1">
+                <span className="text-[11px] font-mono font-bold text-red-650 dark:text-red-400 flex items-center gap-1">
+                  <AlertCircle className="h-3.5 w-3.5" />
+                  Warning: {invalidLines.length} invalid {invalidLines.length === 1 ? 'item' : 'items'} detected
+                </span>
+                <span className="text-[10px] font-mono text-red-500 dark:text-red-400/80 max-h-16 overflow-y-auto">
+                  Invalid values: {invalidLines.join(', ')}
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -330,6 +400,43 @@ function SearchableListEditor({
       )}
     </>
   )
+}
+
+const validateTopic = (val: string) => {
+  const trimmed = val.trim()
+  if (!trimmed) {
+    return { valid: true, normalized: '' }
+  }
+  const match = trimmed.match(/^([tT])(\d{5})$/)
+  if (!match) {
+    return {
+      valid: false,
+      error: 'Topic ID must be in the format T12345 (T followed by exactly 5 digits)',
+    }
+  }
+  return {
+    valid: true,
+    normalized: `T${match[2]}`,
+  }
+}
+
+const validateDoi = (val: string) => {
+  const trimmed = val.trim()
+  if (!trimmed) {
+    return { valid: true, normalized: '' }
+  }
+  // Relaxed DOI validator: must start with 10. and have a slash separating prefix and suffix
+  const match = trimmed.match(/^10\.\d{4,9}\/.+$/)
+  if (!match) {
+    return {
+      valid: false,
+      error: 'DOI must start with "10." followed by a 4-9 digit prefix and a slash (e.g. 10.1016/...)',
+    }
+  }
+  return {
+    valid: true,
+    normalized: trimmed,
+  }
 }
 
 export function Ingest() {
@@ -893,6 +1000,63 @@ export function Ingest() {
     setSaving(true)
     setSaveSuccess(false)
 
+    // Validate topics
+    const invalidTopicsList = topics
+      .split('\n')
+      .map((t) => t.trim())
+      .filter(Boolean)
+      .filter((t) => !validateTopic(t).valid)
+
+    if (invalidTopicsList.length > 0) {
+      triggerAlert(
+        'error',
+        'Validation Error',
+        `Cannot save configuration: Target Topics contains invalid entries: ${invalidTopicsList.join(', ')}`
+      )
+      setSaving(false)
+      return
+    }
+
+    // Validate DOIs
+    const invalidAnchorsList = anchors
+      .split('\n')
+      .map((a) => a.trim())
+      .filter(Boolean)
+      .filter((a) => !validateDoi(a).valid)
+
+    if (invalidAnchorsList.length > 0) {
+      triggerAlert(
+        'error',
+        'Validation Error',
+        `Cannot save configuration: Anchor DOIs contains invalid entries: ${invalidAnchorsList.join(', ')}`
+      )
+      setSaving(false)
+      return
+    }
+
+    const normalizedTopics = topics
+      .split('\n')
+      .map((t) => {
+        const trimmed = t.trim()
+        if (!trimmed) return ''
+        const res = validateTopic(trimmed)
+        return res.valid ? (res.normalized || trimmed) : t
+      })
+      .join('\n')
+
+    const normalizedAnchors = anchors
+      .split('\n')
+      .map((a) => {
+        const trimmed = a.trim()
+        if (!trimmed) return ''
+        const res = validateDoi(trimmed)
+        return res.valid ? (res.normalized || trimmed) : a
+      })
+      .join('\n')
+
+    setTopics(normalizedTopics)
+    setAnchors(normalizedAnchors)
+
     const keysList = apiKeysStr
       .split(',')
       .map((k) => k.trim())
@@ -921,8 +1085,8 @@ export function Ingest() {
         body: JSON.stringify({
           config: updatedConfig,
           keywords,
-          topics,
-          anchors,
+          topics: normalizedTopics,
+          anchors: normalizedAnchors,
           label: saveLabel,
         }),
       })
@@ -1449,6 +1613,7 @@ export function Ingest() {
                   onChange={setAnchors}
                   placeholder="10.1016/j.renene..."
                   maxCollapsedItems={8}
+                  validate={validateDoi}
                 />
               </div>
             </div>
@@ -1514,6 +1679,7 @@ export function Ingest() {
                 onChange={setTopics}
                 placeholder="T10020..."
                 maxCollapsedItems={6}
+                validate={validateTopic}
               />
             </div>
 
