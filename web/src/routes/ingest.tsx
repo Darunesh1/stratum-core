@@ -495,6 +495,12 @@ export function Ingest() {
   const [anchorsMatched, setAnchorsMatched] = useState<number | null>(null)
   const [anchorsMissing, setAnchorsMissing] = useState<string[]>([])
   const [checkAnchors, setCheckAnchors] = useState(true)
+  const [downloadingSample, setDownloadingSample] = useState(false)
+  const [sampleModalConfig, setSampleModalConfig] = useState<{
+    defaultSize: number
+    onConfirm: (size: number) => void
+  } | null>(null)
+  const [sampleSizeInput, setSampleSizeInput] = useState('')
 
   // OpenAlex Topics States
   interface OpenAlexTopic {
@@ -995,6 +1001,81 @@ export function Ingest() {
     } finally {
       setCheckingCount(false)
     }
+  }
+
+  // Download Random Sample CSV Handler
+  const handleDownloadSample = async () => {
+    if (!keywords.trim()) {
+      triggerAlert('info', 'Empty Query', 'Please enter a search keywords query first.')
+      return
+    }
+
+    setSampleSizeInput('385')
+    setSampleModalConfig({
+      defaultSize: 385,
+      onConfirm: async (sampleSize) => {
+        setDownloadingSample(true)
+
+        const keysList = apiKeysStr
+          .split(',')
+          .map((k) => k.trim())
+          .filter(Boolean)
+        const topicsList = topics
+          .split('\n')
+          .map((t) => t.trim())
+          .filter((t) => t && !t.startsWith('#'))
+        const docTypesList = Object.keys(selectedDocTypes).filter((k) => selectedDocTypes[k])
+
+        try {
+          const response = await fetch(`/api/openalex/sample?project=${activeProject}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              query: keywords,
+              keys: keysList,
+              email: apiEmail,
+              date_from: dateFrom,
+              date_to: dateTo,
+              doc_types: docTypesList,
+              topics: topicsList,
+              sample_size: sampleSize,
+            }),
+          })
+
+          if (!response.ok) {
+            const contentType = response.headers.get('content-type')
+            let errMsg = response.statusText
+            if (contentType && contentType.includes('application/json')) {
+              const errData = await response.json()
+              errMsg = errData.error || errMsg
+            }
+            throw new Error(errMsg)
+          }
+
+          const blob = await response.blob()
+          const url = window.URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = `${activeProject || 'openalex'}_sample_${sampleSize}.csv`
+          document.body.appendChild(a)
+          a.click()
+          a.remove()
+          window.URL.revokeObjectURL(url)
+
+          addToast(
+            'success',
+            'Sample Download Completed',
+            `Successfully downloaded CSV sample of ${sampleSize} papers.`,
+          )
+        } catch (err: unknown) {
+          const errMsg = err instanceof Error ? err.message : String(err)
+          triggerAlert('error', 'Download Failed', errMsg)
+          addToast('error', 'Sample Download Failed', errMsg)
+        } finally {
+          setDownloadingSample(false)
+        }
+      }
+    })
   }
 
   const handleGetOpenAlexTopics = async () => {
@@ -2014,19 +2095,35 @@ export function Ingest() {
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleGetOpenAlexCount}
-                  disabled={checkingCount || checkingTopics || !keywords.trim() || queryValid === false}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2 border rounded font-mono text-xs font-bold uppercase bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-800 hover:bg-zinc-800 dark:hover:bg-zinc-200 disabled:opacity-50 cursor-pointer"
-                >
-                  {checkingCount ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Search className="h-3.5 w-3.5" />
-                  )}
-                  Get Search Volume
-                </button>
+                <div className="flex gap-2.5">
+                  <button
+                    type="button"
+                    onClick={handleGetOpenAlexCount}
+                    disabled={checkingCount || checkingTopics || downloadingSample || !keywords.trim() || queryValid === false}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 border rounded font-mono text-xs font-bold uppercase bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-800 hover:bg-zinc-800 dark:hover:bg-zinc-200 disabled:opacity-50 cursor-pointer transition select-none"
+                  >
+                    {checkingCount ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Search className="h-3.5 w-3.5 shrink-0" />
+                    )}
+                    <span>Get Search Volume</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleDownloadSample}
+                    disabled={checkingCount || checkingTopics || downloadingSample || !keywords.trim() || queryValid === false}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 border rounded font-mono text-xs font-bold uppercase bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-200 border-zinc-300 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-850 disabled:opacity-50 cursor-pointer transition select-none"
+                  >
+                    {downloadingSample ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5 shrink-0" />
+                    )}
+                    <span>Get Random Sample</span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -2311,6 +2408,76 @@ export function Ingest() {
                 OK
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* Custom Themed Sample Modal */}
+      {sampleModalConfig && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div
+            className="w-full max-w-sm bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded shadow-xl overflow-hidden animate-in zoom-in-95 duration-200"
+            role="dialog"
+            aria-modal="true"
+          >
+            {/* Modal Header */}
+            <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-zinc-400 dark:bg-zinc-650" />
+              <h3 className="text-xs font-bold font-mono uppercase tracking-wider text-zinc-900 dark:text-zinc-100">
+                Get Random Sample
+              </h3>
+            </div>
+
+            {/* Modal Body */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                const size = parseInt(sampleSizeInput.trim(), 10)
+                if (isNaN(size) || size <= 0) {
+                  triggerAlert('error', 'Invalid Sample Size', 'Please enter a valid positive number.')
+                  return
+                }
+                setSampleModalConfig(null)
+                sampleModalConfig.onConfirm(size)
+              }}
+              className="p-5 flex flex-col gap-4"
+            >
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 leading-relaxed font-sans">
+                Specify the number of papers to retrieve as a random sample. The active keywords, date filters, and topics will be applied.
+              </p>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[9px] font-mono font-bold uppercase tracking-wider text-zinc-400">
+                  Sample Size
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  required
+                  value={sampleSizeInput}
+                  onChange={(e) => setSampleSizeInput(e.target.value)}
+                  className="w-full font-mono text-xs px-3 py-2 border border-zinc-200 dark:border-zinc-800 rounded bg-transparent text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-400 focus:border-transparent transition-all"
+                  placeholder="e.g. 385"
+                  autoFocus
+                />
+              </div>
+
+              {/* Modal Footer */}
+              <div className="mt-2 border-t border-zinc-100 dark:border-zinc-850 pt-4 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setSampleModalConfig(null)}
+                  className="px-4 py-1.5 border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 text-zinc-700 dark:text-zinc-300 rounded text-[10px] font-mono font-bold uppercase tracking-wider cursor-pointer transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 bg-zinc-900 dark:bg-zinc-100 hover:bg-zinc-800 dark:hover:bg-zinc-200 text-white dark:text-zinc-950 rounded text-[10px] font-mono font-bold uppercase tracking-wider cursor-pointer shadow transition"
+                >
+                  Download CSV
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

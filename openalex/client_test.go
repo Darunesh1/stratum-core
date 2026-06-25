@@ -357,3 +357,71 @@ func TestClientWithAPIKey(t *testing.T) {
 	}
 }
 
+func TestFetchSamplePage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		q := r.URL.Query()
+		if q.Get("sample") != "10" {
+			t.Errorf("expected sample=10, got %s", q.Get("sample"))
+		}
+		if q.Get("seed") != "42" {
+			t.Errorf("expected seed=42, got %s", q.Get("seed"))
+		}
+		fmt.Fprintln(w, `{"meta":{"count":10},"results":[{"id":"W_sample_1","title":"Sample Paper 1"}]}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(nil, "test@example.com", 200, 2, 2, 1)
+	client.baseURL = server.URL
+
+	resp, err := client.FetchSamplePage(context.Background(), "filter", 10, 42)
+	if err != nil {
+		t.Fatalf("FetchSamplePage failed: %v", err)
+	}
+
+	if resp.Meta.Count != 10 {
+		t.Errorf("expected count 10, got %d", resp.Meta.Count)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].ID != "W_sample_1" {
+		t.Errorf("unexpected results: %+v", resp.Results)
+	}
+}
+
+func TestFetchSample(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		q := r.URL.Query()
+		requestCount++
+		
+		if requestCount == 1 {
+			if q.Get("sample") != "200" {
+				t.Errorf("first page: expected sample=200, got %s", q.Get("sample"))
+			}
+			fmt.Fprintln(w, `{"meta":{"count":250},"results":[{"id":"W_s1","title":"Paper 1"},{"id":"W_s2","title":"Paper 2"}]}`)
+		} else {
+			if q.Get("sample") != "200" { // Capped at limitPerPage (200)
+				t.Errorf("second page: expected sample=200, got %s", q.Get("sample"))
+			}
+			fmt.Fprintln(w, `{"meta":{"count":250},"results":[{"id":"W_s2","title":"Paper 2"},{"id":"W_s3","title":"Paper 3"}]}`)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(nil, "test@example.com", 200, 2, 2, 1)
+	client.baseURL = server.URL
+
+	resp, err := client.FetchSample(context.Background(), "filter", 250, 100)
+	if err != nil {
+		t.Fatalf("FetchSample failed: %v", err)
+	}
+
+	if len(resp) != 3 {
+		t.Fatalf("expected 3 papers, got %d: %+v", len(resp), resp)
+	}
+	if resp[0].ID != "W_s1" || resp[1].ID != "W_s2" || resp[2].ID != "W_s3" {
+		t.Errorf("unexpected papers returned: %+v", resp)
+	}
+}
+
+

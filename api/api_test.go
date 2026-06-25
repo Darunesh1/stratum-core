@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"database/sql"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -704,3 +705,110 @@ func TestPipelineRouteWithInvalidQuery(t *testing.T) {
 		t.Errorf("expected error message to contain 'Query validation failed', got %s", wRun.Body.String())
 	}
 }
+
+func TestOpenAlexSampleRoute(t *testing.T) {
+	dbPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	server := NewAPIServer("localhost:8080", dbPath)
+	err := server.RegisterRoutes()
+	if err != nil {
+		t.Fatalf("RegisterRoutes failed: %v", err)
+	}
+
+	// Mock OpenAlex API response
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintln(w, `{
+			"meta": {"count": 1},
+			"results": [{
+				"id": "https://openalex.org/W1",
+				"doi": "https://doi.org/10.1234/test",
+				"title": "Test Paper Title",
+				"publication_year": 2026,
+				"type": "journal-article",
+				"primary_topic": {
+					"id": "https://openalex.org/T10001",
+					"display_name": "Test Topic Name"
+				},
+				"abstract_inverted_index": {
+					"Hello": [0],
+					"World": [1]
+				},
+				"cited_by_count": 5,
+				"fwci": 1.25,
+				"institutions_distinct_count": 2,
+				"countries_distinct_count": 1
+			}]
+		}`)
+	}))
+	defer ts.Close()
+
+	mockURL, _ := url.Parse(ts.URL)
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = &redirectTransport{targetURL: mockURL, origTransport: origTransport}
+	defer func() { http.DefaultTransport = origTransport }()
+
+	bodyJSON, _ := json.Marshal(map[string]interface{}{
+		"query":       "test query",
+		"email":       "test@example.com",
+		"sample_size": 1,
+	})
+
+	req := httptest.NewRequest("POST", "/api/openalex/sample", bytes.NewBuffer(bodyJSON))
+	w := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+	}
+
+	contentType := w.Header().Get("Content-Type")
+	if contentType != "text/csv" {
+		t.Errorf("expected Content-Type text/csv, got %s", contentType)
+	}
+
+	contentDisposition := w.Header().Get("Content-Disposition")
+	if !strings.Contains(contentDisposition, "openalex_sample_1.csv") {
+		t.Errorf("expected Content-Disposition to contain openalex_sample_1.csv, got %s", contentDisposition)
+	}
+
+	// Verify CSV contents
+	csvReader := csv.NewReader(w.Body)
+	records, err := csvReader.ReadAll()
+	if err != nil {
+		t.Fatalf("failed to read CSV response: %v", err)
+	}
+
+	if len(records) != 2 { // Header + 1 Row
+		t.Fatalf("expected 2 CSV rows, got %d", len(records))
+	}
+
+	// Header verify
+	expectedHeader := []string{
+		"id", "doi", "title", "publication_year", "type",
+		"topic_id", "topic_name", "abstract_text",
+		"cited_by_count", "fwci", "institutions_count", "countries_count",
+	}
+	for i, h := range expectedHeader {
+		if records[0][i] != h {
+			t.Errorf("header column %d: expected %s, got %s", i, h, records[0][i])
+		}
+	}
+
+	// Row verify
+	row := records[1]
+	if row[0] != "https://openalex.org/W1" || row[1] != "https://doi.org/10.1234/test" || row[2] != "Test Paper Title" {
+		t.Errorf("unexpected row data fields: %v", row)
+	}
+	if row[3] != "2026" || row[4] != "journal-article" || row[5] != "T10001" || row[6] != "Test Topic Name" {
+		t.Errorf("unexpected topic or metadata fields: %v", row)
+	}
+	if row[7] != "Hello World" { // Reconstructed abstract text
+		t.Errorf("expected reconstructed abstract 'Hello World', got %q", row[7])
+	}
+	if row[8] != "5" || row[9] != "1.25" || row[10] != "2" || row[11] != "1" {
+		t.Errorf("unexpected stats fields: %v", row)
+	}
+}
+
