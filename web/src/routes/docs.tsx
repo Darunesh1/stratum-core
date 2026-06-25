@@ -144,28 +144,46 @@ export function Docs() {
                   <td className="p-2.5 border-r border-zinc-200 dark:border-zinc-800 font-bold text-zinc-800 dark:text-zinc-200">
                     papers
                   </td>
-                  <td className="p-2.5 border-r border-zinc-200 dark:border-zinc-800">
-                    id, doi, title, publication_year, journal_name, is_oa, cited_by_count, fwci
+                  <td className="p-2.5 border-r border-zinc-200 dark:border-zinc-800 text-[10px] break-all leading-normal max-w-md">
+                    id, doi, title, publication_year, publication_date, type, journal_name, journal_issn, is_core_journal, publisher, is_oa, oa_status, oa_url, cited_by_count, citation_percentile, is_top_1_percent, is_top_10_percent, fwci, primary_topic_id, primary_topic_name, primary_topic_score, primary_topic_field, primary_topic_subfield, primary_topic_domain, institutions_distinct_count, countries_distinct_count, is_international, abstract_text, updated_date
                   </td>
                   <td className="p-2.5">id (VARCHAR) PRIMARY KEY</td>
                 </tr>
                 <tr className="border-b border-zinc-150 dark:border-zinc-850 hover:bg-zinc-50/40">
                   <td className="p-2.5 border-r border-zinc-200 dark:border-zinc-800 font-bold text-zinc-800 dark:text-zinc-200">
-                    contributions
+                    authors
                   </td>
-                  <td className="p-2.5 border-r border-zinc-200 dark:border-zinc-800">
-                    row_id, paper_id, author_id, institution_id, country_code, author_position
+                  <td className="p-2.5 border-r border-zinc-200 dark:border-zinc-800 text-[10px]">
+                    id, display_name, orcid
                   </td>
-                  <td className="p-2.5">row_id (INTEGER) PRIMARY KEY</td>
+                  <td className="p-2.5">id (VARCHAR) PRIMARY KEY</td>
                 </tr>
-                <tr className="hover:bg-zinc-50/40">
+                <tr className="border-b border-zinc-150 dark:border-zinc-850 hover:bg-zinc-50/40">
                   <td className="p-2.5 border-r border-zinc-200 dark:border-zinc-800 font-bold text-zinc-800 dark:text-zinc-200">
                     institutions
                   </td>
-                  <td className="p-2.5 border-r border-zinc-200 dark:border-zinc-800">
-                    id, display_name, country_code, type, is_synthetic
+                  <td className="p-2.5 border-r border-zinc-200 dark:border-zinc-800 text-[10px]">
+                    id, display_name, country_code, type, ror_id, is_synthetic
                   </td>
                   <td className="p-2.5">id (VARCHAR) PRIMARY KEY</td>
+                </tr>
+                <tr className="border-b border-zinc-150 dark:border-zinc-850 hover:bg-zinc-50/40">
+                  <td className="p-2.5 border-r border-zinc-200 dark:border-zinc-800 font-bold text-zinc-800 dark:text-zinc-200">
+                    countries
+                  </td>
+                  <td className="p-2.5 border-r border-zinc-200 dark:border-zinc-800 text-[10px]">
+                    id, country_name, country_code, status
+                  </td>
+                  <td className="p-2.5">id (INTEGER) PRIMARY KEY, country_code UNIQUE</td>
+                </tr>
+                <tr className="border-b border-zinc-150 dark:border-zinc-850 hover:bg-zinc-50/40">
+                  <td className="p-2.5 border-r border-zinc-200 dark:border-zinc-800 font-bold text-zinc-800 dark:text-zinc-200">
+                    contributions
+                  </td>
+                  <td className="p-2.5 border-r border-zinc-200 dark:border-zinc-800 text-[10px] break-all leading-normal max-w-md">
+                    row_id, paper_id, author_id, institution_id, country_code, author_name, author_position, is_corresponding, raw_affiliation_string
+                  </td>
+                  <td className="p-2.5">row_id (INTEGER) PRIMARY KEY</td>
                 </tr>
               </tbody>
             </table>
