@@ -22,6 +22,7 @@ import {
   Minimize2,
   Plus,
   Trash2,
+  Download,
 } from 'lucide-react'
 
 interface ScoredKeyword {
@@ -845,6 +846,45 @@ export function Ingest() {
     } finally {
       setCheckingTopics(false)
     }
+  }
+
+  const handleDownloadTopicsCSV = () => {
+    if (!openalexTopics || openalexTopics.length === 0) return
+
+    // CSV Headers
+    const headers = ['Topic ID', 'Topic Name', 'Description', 'Paper Count', 'Percentage']
+
+    // Helper to escape values for CSV
+    const escapeCSV = (val: string) => {
+      const escaped = val.replace(/"/g, '""')
+      return `"${escaped}"`
+    }
+
+    // Map rows
+    const rows = openalexTopics.map((t) => [
+      t.topic_id,
+      escapeCSV(t.display_name),
+      escapeCSV(t.description || ''),
+      t.paper_count,
+      `${t.percentage.toFixed(4)}%`
+    ])
+
+    // Construct CSV content
+    const csvContent = [
+      headers.join(','),
+      ...rows.map((row) => row.join(','))
+    ].join('\n')
+
+    // Create a blob and trigger download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.setAttribute('href', url)
+    link.setAttribute('download', `openalex_topics_${activeProject || 'export'}.csv`)
+    link.style.visibility = 'hidden'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
   }
 
   // Save Config Handler
@@ -1774,13 +1814,23 @@ export function Ingest() {
                       Showing research topics in matching publications.
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setOpenalexTopics(null)}
-                    className="text-[10px] font-mono uppercase text-zinc-400 hover:text-zinc-650 dark:hover:text-zinc-200 cursor-pointer"
-                  >
-                    Clear Results
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={handleDownloadTopicsCSV}
+                      className="flex items-center gap-1.5 text-[10px] font-mono uppercase text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 cursor-pointer font-bold border border-zinc-200 dark:border-zinc-800 px-2.5 py-1 rounded bg-zinc-50 hover:bg-zinc-100 dark:bg-zinc-900/50 dark:hover:bg-zinc-850 transition-colors"
+                    >
+                      <Download className="h-3 w-3" />
+                      Download CSV
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOpenalexTopics(null)}
+                      className="text-[10px] font-mono uppercase text-zinc-400 hover:text-zinc-650 dark:hover:text-zinc-200 cursor-pointer"
+                    >
+                      Clear Results
+                    </button>
+                  </div>
                 </div>
 
                 {openalexTopics.length === 0 ? (
