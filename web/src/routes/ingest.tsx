@@ -509,6 +509,29 @@ export function Ingest() {
   const [openalexTopicsTotalPapers, setOpenalexTopicsTotalPapers] = useState<number | null>(null)
   const [showAllTopics, setShowAllTopics] = useState(false)
 
+  const selectedTopicsList = useMemo(() => {
+    return topics
+      .split('\n')
+      .map((t) => t.trim())
+      .filter(Boolean)
+  }, [topics])
+
+  const isTopicSelected = useCallback((topicId: string) => {
+    return selectedTopicsList.includes(topicId.trim())
+  }, [selectedTopicsList])
+
+  const handleToggleTopic = useCallback((topicId: string, checked: boolean) => {
+    const trimmedId = topicId.trim()
+    let newList: string[]
+    if (checked) {
+      if (selectedTopicsList.includes(trimmedId)) return
+      newList = [...selectedTopicsList, trimmedId]
+    } else {
+      newList = selectedTopicsList.filter((t) => t !== trimmedId)
+    }
+    setTopics(newList.join('\n'))
+  }, [selectedTopicsList])
+
   // Save States
   const [saving, setSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
@@ -1998,7 +2021,6 @@ export function Ingest() {
                     </button>
                   </div>
                 </div>
-
                 {openalexTopics.length === 0 ? (
                   <div className="py-8 text-center text-xs font-mono text-zinc-400 uppercase">
                     No topic distribution data retrieved
@@ -2009,6 +2031,7 @@ export function Ingest() {
                       <table className="w-full text-left border-collapse text-xs font-sans">
                         <thead>
                           <tr className="bg-zinc-50 dark:bg-zinc-900/50 border-b border-zinc-150 dark:border-zinc-800 text-[10px] font-mono uppercase text-zinc-400">
+                            <th className="p-3 w-16 text-center font-bold">Target</th>
                             <th className="p-3 w-28">Topic ID</th>
                             <th className="p-3">Topic Name</th>
                             <th className="p-3">Description</th>
@@ -2019,6 +2042,14 @@ export function Ingest() {
                         <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
                           {openalexTopics.slice(0, showAllTopics ? openalexTopics.length : 10).map((topic) => (
                             <tr key={topic.topic_id} className="hover:bg-zinc-50/55 dark:hover:bg-zinc-900/10">
+                              <td className="p-3 text-center w-16">
+                                <input
+                                  type="checkbox"
+                                  checked={isTopicSelected(topic.topic_id)}
+                                  onChange={(e) => handleToggleTopic(topic.topic_id, e.target.checked)}
+                                  className="rounded border-zinc-300 text-zinc-900 focus:ring-0 cursor-pointer"
+                                />
+                              </td>
                               <td className="p-3 font-mono text-[11px]">
                                 <span className="bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-800 dark:text-zinc-300 font-semibold border border-zinc-200/50 dark:border-zinc-800">
                                   {topic.topic_id}
