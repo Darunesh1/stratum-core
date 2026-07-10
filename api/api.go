@@ -25,6 +25,7 @@ import (
 	"stratum/tfidf"
 
 	"github.com/extrame/xls"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -57,12 +58,14 @@ type APIServer struct {
 	pipelineStatuses map[string]*PipelineStatus
 	projectMutexes   map[string]*sync.Mutex
 	server           *http.Server
+	mcpServer        *mcp.Server
+	mcpHandler       *mcp.SSEHandler
 	mu               sync.Mutex
 }
 
 // NewAPIServer creates a new API server on the specified address.
 func NewAPIServer(addr string, dbPath string) *APIServer {
-	return &APIServer{
+	s := &APIServer{
 		addr:             addr,
 		dbPath:           dbPath,
 		dbManagers:       make(map[string]*db.DBManager),
@@ -70,6 +73,25 @@ func NewAPIServer(addr string, dbPath string) *APIServer {
 		pipelineStatuses: make(map[string]*PipelineStatus),
 		projectMutexes:   make(map[string]*sync.Mutex),
 	}
+
+	s.mcpServer = mcp.NewServer(&mcp.Implementation{
+		Name:    "stratum-mcp-sse",
+		Version: "1.0.0",
+	}, nil)
+
+	if err := s.RegisterMCPTools(); err != nil {
+		log.Printf("[WARNING] Failed to register MCP tools: %v", err)
+	}
+
+	if err := s.RegisterMCPResources(); err != nil {
+		log.Printf("[WARNING] Failed to register MCP resources: %v", err)
+	}
+
+	s.mcpHandler = mcp.NewSSEHandler(func(request *http.Request) *mcp.Server {
+		return s.mcpServer
+	}, &mcp.SSEOptions{})
+
+	return s
 }
 
 // RegisterRoutes registers endpoints for dashboard metrics, query execution, files, and config.
@@ -91,6 +113,7 @@ func (s *APIServer) RegisterRoutes() error {
 	mux.HandleFunc("/api/openalex/topics", s.handleOpenAlexTopics)
 	mux.HandleFunc("/api/projects", s.handleListProjects)
 	mux.HandleFunc("/api/projects/create", s.handleCreateProject)
+	mux.Handle("/api/mcp", s.mcpHandler)
 
 	// Get sub-filesystem for frontend assets
 	subFS, err := fs.Sub(frontendFS, "dist")
