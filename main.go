@@ -18,7 +18,19 @@ func main() {
 	dbPath := flag.String("db", "data/db/papers.db", "Path to the DuckDB database file")
 	flag.Parse()
 
+	args := flag.Args()
+	if len(args) > 0 && args[0] == "mcp" {
+		fmt.Fprintln(os.Stderr, "Starting Stratum MCP Server (stdio mode)...")
+		srv := api.NewAPIServer("", *dbPath)
+		ctx := context.Background()
+		if err := srv.RunMCPStdio(ctx); err != nil {
+			log.Fatalf("MCP server failed: %v", err)
+		}
+		return
+	}
+
 	fmt.Printf("Starting Stratum Web Server on http://localhost:%d...\n", *port)
+	fmt.Printf("Integrated MCP SSE Server listening at http://localhost:%d/api/mcp\n", *port)
 	addr := fmt.Sprintf(":%d", *port)
 	srv := api.NewAPIServer(addr, *dbPath)
 	if err := srv.RegisterRoutes(); err != nil {

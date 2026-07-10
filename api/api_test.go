@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"stratum/config"
 	"stratum/db"
 )
@@ -811,4 +813,67 @@ func TestOpenAlexSampleRoute(t *testing.T) {
 		t.Errorf("unexpected stats fields: %v", row)
 	}
 }
+
+func TestMCPRoute(t *testing.T) {
+	dbPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	server := NewAPIServer("localhost:8080", dbPath)
+	err := server.RegisterRoutes()
+	if err != nil {
+		t.Fatalf("RegisterRoutes failed: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	req := httptest.NewRequest("GET", "/api/mcp", nil).WithContext(ctx)
+	req.Header.Set("Accept", "text/event-stream")
+	w := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected GET status 200, got %d", w.Code)
+	}
+
+	contentType := w.Header().Get("Content-Type")
+	if !strings.Contains(contentType, "text/event-stream") {
+		t.Errorf("expected Content-Type to contain text/event-stream, got %q", contentType)
+	}
+
+	bodyStr := w.Body.String()
+	if !strings.Contains(bodyStr, "event: endpoint") {
+		t.Errorf("expected body to contain 'event: endpoint' initialization, got %q", bodyStr)
+	}
+}
+
+func TestMCPResources(t *testing.T) {
+	dbPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	server := NewAPIServer("localhost:8080", dbPath)
+
+	// Test Knowledge Resource Handler
+	hKnowledge := server.handleReadKnowledgeResource()
+	reqK := &mcp.ReadResourceRequest{
+		Params: &mcp.ReadResourceParams{
+			URI: "stratum://knowledge/agents/search",
+		},
+	}
+
+	resK, err := hKnowledge(context.Background(), reqK)
+	if err != nil {
+		t.Fatalf("Knowledge resource read failed: %v", err)
+	}
+	if len(resK.Contents) == 0 {
+		t.Fatalf("expected contents, got empty")
+	}
+	if !strings.Contains(resK.Contents[0].Text, "Search Agent") {
+		t.Errorf("expected text to contain 'Search Agent', got %q", resK.Contents[0].Text)
+	}
+}
+
+
+
+
 
