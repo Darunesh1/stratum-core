@@ -45,6 +45,7 @@ type SearchResult struct {
 	AnchorsTotal   int      `json:"anchors_total,omitempty"`
 	AnchorsMatched int      `json:"anchors_matched,omitempty"`
 	AnchorsMissing []string `json:"anchors_missing,omitempty"`
+	RetrievalNote  string   `json:"retrieval_note,omitempty"`
 }
 
 type DownloadArgs struct {
@@ -181,11 +182,17 @@ type ValidateAnchorsArgs struct {
 	Project string `json:"project,omitempty" jsonschema:"Optional project name"`
 }
 
+type AnchorStatus struct {
+	DOI          string `json:"doi"`
+	Status       string `json:"status"`
+	IndexDetails string `json:"details"`
+}
+
 type ValidateAnchorsResult struct {
-	Total          int      `json:"total"`
-	IndexedCount   int      `json:"indexed_count"`
-	MissingCount   int      `json:"missing_count"`
-	MissingAnchors []string `json:"missing_anchors"`
+	Total         int            `json:"total"`
+	IndexedCount  int            `json:"indexed_count"`
+	MissingCount  int            `json:"missing_count"`
+	AnchorsReport []AnchorStatus `json:"anchors_report"`
 }
 
 // Search & sample structures
@@ -535,8 +542,17 @@ func (s *APIServer) handleSearch(ctx context.Context, req *mcp.CallToolRequest, 
 	}
 
 	text := fmt.Sprintf("Found %d papers matching configuration filters in OpenAlex.", count)
+	var displayMissing []string
+	var retrievalNote string
 	if args.CheckAnchors {
 		text += fmt.Sprintf(" Anchor match coverage: %d/%d matches.", matchedCount, len(anchors))
+		if len(missingDOIs) > 10 {
+			displayMissing = missingDOIs[:10]
+			retrievalNote = fmt.Sprintf("Only the first 10 missing DOIs are shown to keep context size low (%d missing total). " +
+				"Use the 'validate_anchors' tool to check the full list of missing anchors and verify their indexing status.", len(missingDOIs))
+		} else {
+			displayMissing = missingDOIs
+		}
 	}
 
 	return &mcp.CallToolResult{
@@ -545,7 +561,8 @@ func (s *APIServer) handleSearch(ctx context.Context, req *mcp.CallToolRequest, 
 		TotalCount:     count,
 		AnchorsTotal:   len(anchors),
 		AnchorsMatched: matchedCount,
-		AnchorsMissing: missingDOIs,
+		AnchorsMissing: displayMissing,
+		RetrievalNote:  retrievalNote,
 	}, nil
 }
 
@@ -1664,8 +1681,9 @@ func (s *APIServer) handleValidateAnchorsMCP(ctx context.Context, req *mcp.CallT
 	}
 
 	client := openalex.NewClient(cfg.API.Keys, cfg.API.Email, 200, 5, 3, 1)
-	var missing []string
+	var report []AnchorStatus
 	var indexed int
+	var missingCount int
 
 	for _, doi := range cfg.Anchors {
 		doi = strings.TrimSpace(doi)
@@ -1675,16 +1693,26 @@ func (s *APIServer) handleValidateAnchorsMCP(ctx context.Context, req *mcp.CallT
 		count, err := client.GetTotalCount(ctx, "doi:"+doi)
 		if err == nil && count > 0 {
 			indexed++
+			report = append(report, AnchorStatus{
+				DOI:          doi,
+				Status:       "indexed",
+				IndexDetails: "Found on OpenAlex API",
+			})
 		} else {
-			missing = append(missing, doi)
+			missingCount++
+			report = append(report, AnchorStatus{
+				DOI:          doi,
+				Status:       "missing",
+				IndexDetails: "DOI not found on OpenAlex search endpoints (either not indexed or typo in DOI string)",
+			})
 		}
 	}
 
 	return &mcp.CallToolResult{}, ValidateAnchorsResult{
-		Total:          len(cfg.Anchors),
-		IndexedCount:   indexed,
-		MissingCount:   len(missing),
-		MissingAnchors: missing,
+		Total:         len(cfg.Anchors),
+		IndexedCount:  indexed,
+		MissingCount:  missingCount,
+		AnchorsReport: report,
 	}, nil
 }
 
