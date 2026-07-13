@@ -116,14 +116,21 @@ type SelectProjectResult struct {
 }
 
 type GetProjectConfigArgs struct {
-	Project string `json:"project,omitempty" jsonschema:"Optional project name. Defaults to active project"`
+	Project        string `json:"project,omitempty" jsonschema:"Optional project name. Defaults to active project"`
+	IncludeQuery   bool   `json:"include_query,omitempty" jsonschema:"Set true to explicitly retrieve the full boolean query keywords"`
+	IncludeTopics  bool   `json:"include_topics,omitempty" jsonschema:"Set true to explicitly retrieve the full list of topic IDs"`
+	IncludeAnchors bool   `json:"include_anchors,omitempty" jsonschema:"Set true to explicitly retrieve the full list of anchor DOIs"`
 }
 
 type GetProjectConfigResult struct {
-	Config   config.AppConfig `json:"config"`
-	Keywords string           `json:"keywords"`
-	Topics   string           `json:"topics"`
-	Anchors  string           `json:"anchors"`
+	Config        config.AppConfig `json:"config"`
+	Keywords      string           `json:"keywords,omitempty"`
+	Topics        string           `json:"topics,omitempty"`
+	Anchors       string           `json:"anchors,omitempty"`
+	KeywordsLen   int              `json:"keywords_length"`
+	TopicsCount   int              `json:"topics_count"`
+	AnchorsCount  int              `json:"anchors_count"`
+	RetrievalNote string           `json:"retrieval_note,omitempty"`
 }
 
 type UpdateProjectConfigArgs struct {
@@ -1396,14 +1403,44 @@ func (s *APIServer) handleGetProjectConfigMCP(ctx context.Context, req *mcp.Call
 		return nil, GetProjectConfigResult{}, fmt.Errorf("failed to load config: %w", err)
 	}
 
-	topicsStr := strings.Join(cfg.Topics, "\n")
-	anchorsStr := strings.Join(cfg.Anchors, "\n")
+	keywordsCount := len(cfg.Keywords)
+	topicsCount := len(cfg.Topics)
+	anchorsCount := len(cfg.Anchors)
+
+	var keywords string
+	var topics string
+	var anchors string
+
+	if args.IncludeQuery {
+		keywords = cfg.Keywords
+	} else {
+		cfg.Keywords = ""
+	}
+
+	if args.IncludeTopics {
+		topics = strings.Join(cfg.Topics, "\n")
+	} else {
+		cfg.Topics = nil
+	}
+
+	if args.IncludeAnchors {
+		anchors = strings.Join(cfg.Anchors, "\n")
+	} else {
+		cfg.Anchors = nil
+	}
+
+	retrievalNote := "Large query string/keywords, topic IDs, and anchor DOIs are hidden by default to keep context size low. " +
+		"If you need them, call get_project_config with include_query: true, include_topics: true, or include_anchors: true."
 
 	return &mcp.CallToolResult{}, GetProjectConfigResult{
-		Config:   *cfg,
-		Keywords: cfg.Keywords,
-		Topics:   topicsStr,
-		Anchors:  anchorsStr,
+		Config:        *cfg,
+		Keywords:      keywords,
+		Topics:        topics,
+		Anchors:       anchors,
+		KeywordsLen:   keywordsCount,
+		TopicsCount:   topicsCount,
+		AnchorsCount:  anchorsCount,
+		RetrievalNote: retrievalNote,
 	}, nil
 }
 
