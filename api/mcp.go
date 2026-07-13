@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/url"
 	"os"
@@ -12,12 +13,15 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"stratum/config"
 	"stratum/docs"
 	"stratum/impute"
 	"stratum/openalex"
+	"stratum/tfidf"
+	"stratum/wos"
 	"stratum/workflow"
 )
 
@@ -86,9 +90,172 @@ type GetTopicsResult struct {
 	Markdown string `json:"markdown"`
 }
 
+// Project Management structures
+type CreateProjectArgs struct {
+	Name string `json:"name" jsonschema:"The unique alphanumeric name of the research project to create"`
+}
+
+type CreateProjectResult struct {
+	Status string `json:"status"`
+	Name   string `json:"name"`
+}
+
+type ListProjectsArgs struct{}
+
+type ListProjectsResult struct {
+	Projects []string `json:"projects"`
+}
+
+type SelectProjectArgs struct {
+	Project string `json:"project" jsonschema:"The project name to set as active for subsequent tool invocations"`
+}
+
+type SelectProjectResult struct {
+	Status string `json:"status"`
+	Active string `json:"active"`
+}
+
+type GetProjectConfigArgs struct {
+	Project string `json:"project,omitempty" jsonschema:"Optional project name. Defaults to active project"`
+}
+
+type GetProjectConfigResult struct {
+	Config   config.AppConfig `json:"config"`
+	Keywords string           `json:"keywords"`
+	Topics   string           `json:"topics"`
+	Anchors  string           `json:"anchors"`
+}
+
+type UpdateProjectConfigArgs struct {
+	Project   string   `json:"project,omitempty" jsonschema:"Optional project name"`
+	Keywords  string   `json:"keywords,omitempty" jsonschema:"Optional boolean search keywords query"`
+	Topics    []string `json:"topics,omitempty" jsonschema:"Optional list of OpenAlex topic IDs"`
+	Anchors   []string `json:"anchors,omitempty" jsonschema:"Optional list of anchor DOIs"`
+	DateFrom  string   `json:"date_from,omitempty" jsonschema:"Optional start date (YYYY-MM-DD)"`
+	DateTo    string   `json:"date_to,omitempty" jsonschema:"Optional end date (YYYY-MM-DD)"`
+	DocTypes  []string `json:"doc_types,omitempty" jsonschema:"Optional list of document types"`
+	Label     string   `json:"label,omitempty" jsonschema:"Label description for this version revision"`
+}
+
+type UpdateProjectConfigResult struct {
+	Status string `json:"status"`
+}
+
+// Anchor Prep structures
+type UploadReferenceArgs struct {
+	FilePath string `json:"file_path" jsonschema:"Absolute path of reference file in local workspace"`
+	Project  string `json:"project,omitempty" jsonschema:"Optional project name"`
+}
+
+type UploadReferenceResult struct {
+	Status   string   `json:"status"`
+	Filename string   `json:"filename"`
+	Columns  []string `json:"columns"`
+	RowCount int      `json:"row_count"`
+}
+
+type ExtractQueryAndAnchorsArgs struct {
+	Filename       string `json:"filename" jsonschema:"Filename of uploaded reference sheet inside project uploads folder"`
+	TitleColumn    string `json:"title_column" jsonschema:"Column name containing paper titles"`
+	AbstractColumn string `json:"abstract_column" jsonschema:"Column name containing paper abstracts"`
+	DOIColumn      string `json:"doi_column,omitempty" jsonschema:"Column name containing paper DOIs"`
+	SaveToConfig   bool   `json:"save_to_config,omitempty" jsonschema:"Save suggested keywords and extracted anchors directly into project config"`
+	Project        string `json:"project,omitempty" jsonschema:"Optional project name"`
+}
+
+type ExtractQueryAndAnchorsResult struct {
+	Keywords        string   `json:"keywords"`
+	ExtractedDOIs   []string `json:"extracted_dois"`
+	AnchorsSaved    int      `json:"anchors_saved"`
+	UnindexedReview []string `json:"unindexed_review,omitempty"`
+}
+
+type ValidateAnchorsArgs struct {
+	Project string `json:"project,omitempty" jsonschema:"Optional project name"`
+}
+
+type ValidateAnchorsResult struct {
+	Total          int      `json:"total"`
+	IndexedCount   int      `json:"indexed_count"`
+	MissingCount   int      `json:"missing_count"`
+	MissingAnchors []string `json:"missing_anchors"`
+}
+
+// Search & sample structures
+type GetSampleArgs struct {
+	Size    int    `json:"size,omitempty" jsonschema:"Number of records to fetch. Default 20, max 200"`
+	Project string `json:"project,omitempty" jsonschema:"Optional project name"`
+}
+
+type GetSampleResult struct {
+	TotalMatches int             `json:"total_matches"`
+	Samples      []openalex.Work `json:"samples"`
+}
+
+// Exploration structures
+type QuerySQLArgs struct {
+	Query   string `json:"query" jsonschema:"Factual SELECT statement to query collected data (read-only)"`
+	Project string `json:"project,omitempty" jsonschema:"Optional project name"`
+}
+
+type QuerySQLResult struct {
+	Columns []string                 `json:"columns"`
+	Rows    []map[string]interface{} `json:"rows"`
+}
+
+type GetStatisticsArgs struct {
+	Project string `json:"project,omitempty" jsonschema:"Optional project name"`
+}
+
+type GetStatisticsResult struct {
+	TotalPapers            int     `json:"total_papers"`
+	TotalAuthors           int     `json:"total_authors"`
+	TotalInstitutions      int     `json:"total_institutions"`
+	TotalCountries         int     `json:"total_countries"`
+	MissingCountryCount    int     `json:"missing_country_count"`
+	MissingInstitutionID   int     `json:"missing_institution_id_count"`
+	ImputedCountryCount    int     `json:"imputed_country_count"`
+	ImputationCompleteness float64 `json:"imputation_completeness_percent"`
+}
+
+// WoS Integration structures
+type UploadWoSArgs struct {
+	FilePath string `json:"file_path" jsonschema:"Absolute path of WoS file in local workspace"`
+	Project  string `json:"project,omitempty" jsonschema:"Optional project name"`
+}
+
+type UploadWoSResult struct {
+	Status   string `json:"status"`
+	Filename string `json:"filename"`
+	Size     int64  `json:"size_bytes"`
+}
+
+type ImportWoSDoisArgs struct {
+	Filename string `json:"filename" jsonschema:"Filename of WoS upload inside project uploads folder"`
+	Project  string `json:"project,omitempty" jsonschema:"Optional project name"`
+}
+
+type ImportWoSDoisResult struct {
+	Status          string `json:"status"`
+	ImportedRecords int    `json:"imported_records"`
+}
+
+type SyncWoSOpenAlexArgs struct {
+	Filename string `json:"filename" jsonschema:"Filename of WoS upload inside project uploads folder"`
+	Project  string `json:"project,omitempty" jsonschema:"Optional project name"`
+}
+
+type SyncWoSOpenAlexResult struct {
+	TotalWoS          int     `json:"total_wos"`
+	TotalDB           int     `json:"total_db"`
+	ExactDOIMatches   int     `json:"exact_doi_matches"`
+	FuzzyTitleMatches int     `json:"fuzzy_title_matches"`
+	OverlapPercentage float64 `json:"overlap_percentage"`
+}
+
 func (s *APIServer) resolveProjectFromConfigPath(configPath string) string {
 	if configPath == "" {
-		return "default"
+		return s.currentProject
 	}
 	cleaned := filepath.ToSlash(filepath.Clean(configPath))
 	parts := strings.Split(cleaned, "/")
@@ -97,7 +264,7 @@ func (s *APIServer) resolveProjectFromConfigPath(configPath string) string {
 			return sanitizeProjectName(parts[i+1])
 		}
 	}
-	return "default"
+	return s.currentProject
 }
 
 func (s *APIServer) RegisterMCPTools() error {
@@ -130,6 +297,76 @@ func (s *APIServer) RegisterMCPTools() error {
 		Name:        "get_topics",
 		Description: "Fetch the distribution of research topics and paper counts matching the keyword filters from OpenAlex.",
 	}, s.handleGetTopics)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "create_project",
+		Description: "Create a new isolated research project directory and setup default config database.",
+	}, s.handleCreateProjectMCP)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "list_projects",
+		Description: "List all existing research project workspace folders.",
+	}, s.handleListProjectsMCP)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "select_project",
+		Description: "Set the active research project for subsequent tool invocations.",
+	}, s.handleSelectProjectMCP)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "get_project_config",
+		Description: "Retrieve active configuration settings (keywords, anchors, topics, metadata filters) for a project.",
+	}, s.handleGetProjectConfigMCP)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "update_project_config",
+		Description: "Update keywords, topic IDs, anchor DOIs, publication years, or document types in the project config database.",
+	}, s.handleUpdateProjectConfigMCP)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "upload_reference_file",
+		Description: "Upload reference publications (CSV/Excel) containing anchor DOIs into the project uploads folder.",
+	}, s.handleUploadReferenceMCP)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "extract_query_and_anchors",
+		Description: "Apply TF-IDF extraction to uploaded files to discover keywords and extract anchor publication DOIs.",
+	}, s.handleExtractQueryAndAnchorsMCP)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "validate_anchors",
+		Description: "Verify recall index coverage of configured anchor DOIs on the OpenAlex API.",
+	}, s.handleValidateAnchorsMCP)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "get_sample",
+		Description: "Fetch a random sample of academic papers matching current configuration filters from OpenAlex for review.",
+	}, s.handleGetSampleMCP)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "query_sql",
+		Description: "Execute custom read-only DuckDB SELECT queries against the local database of downloaded papers.",
+	}, s.handleQuerySQLMCP)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "get_statistics",
+		Description: "Retrieve aggregate counts (total papers, unique authors, unique countries) and metadata completeness status from the local database.",
+	}, s.handleGetStatisticsMCP)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "upload_wos_file",
+		Description: "Upload a Web of Science export file (CSV, Excel, or Plain Text) to the project uploads directory.",
+	}, s.handleUploadWoSMCP)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "import_wos_dois",
+		Description: "Parse the uploaded Web of Science file and import its DOIs/records into the project database.",
+	}, s.handleImportWoSDoisMCP)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "sync_wos_openalex",
+		Description: "Compare DOIs in the imported WoS files against the OpenAlex database to evaluate paper overlap and coverage.",
+	}, s.handleSyncWoSOpenAlexMCP)
 
 	return nil
 }
@@ -1071,4 +1308,645 @@ func (s *APIServer) handleReadStateHistory() mcp.ResourceHandler {
 			},
 		}, nil
 	}
+}
+
+// Project Management handlers
+func (s *APIServer) handleCreateProjectMCP(ctx context.Context, req *mcp.CallToolRequest, args CreateProjectArgs) (*mcp.CallToolResult, CreateProjectResult, error) {
+	name := sanitizeProjectName(args.Name)
+	if name == "" || name == "default" {
+		return nil, CreateProjectResult{}, fmt.Errorf("invalid project name")
+	}
+
+	if err := s.ensureProjectDirs(name); err != nil {
+		return nil, CreateProjectResult{}, fmt.Errorf("failed to create project directories: %w", err)
+	}
+
+	configDB, err := s.getConfigDB(name)
+	if err != nil {
+		return nil, CreateProjectResult{}, fmt.Errorf("failed to initialize config DB: %w", err)
+	}
+
+	configDBPath, _, _, _, _ := s.getProjectPaths(name)
+	cfg, err := config.LoadConfig(configDBPath)
+	var keywords, topics, anchors string
+	if err == nil {
+		keywords = cfg.Keywords
+		topics = strings.Join(cfg.Topics, "\n")
+		anchors = strings.Join(cfg.Anchors, "\n")
+	}
+	_ = s.appendConfigRevision(configDB, keywords, topics, anchors, "Project Created")
+
+	return &mcp.CallToolResult{}, CreateProjectResult{
+		Status: "success",
+		Name:   name,
+	}, nil
+}
+
+func (s *APIServer) handleListProjectsMCP(ctx context.Context, req *mcp.CallToolRequest, args ListProjectsArgs) (*mcp.CallToolResult, ListProjectsResult, error) {
+	projects := []string{"default"}
+
+	if entries, err := os.ReadDir("projects"); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				name := entry.Name()
+				if name == sanitizeProjectName(name) {
+					projects = append(projects, name)
+				}
+			}
+		}
+	}
+
+	return &mcp.CallToolResult{}, ListProjectsResult{
+		Projects: projects,
+	}, nil
+}
+
+func (s *APIServer) handleSelectProjectMCP(ctx context.Context, req *mcp.CallToolRequest, args SelectProjectArgs) (*mcp.CallToolResult, SelectProjectResult, error) {
+	name := sanitizeProjectName(args.Project)
+	if name == "" {
+		return nil, SelectProjectResult{}, fmt.Errorf("invalid project name")
+	}
+	if name != "default" {
+		if fi, err := os.Stat(filepath.Join("projects", name)); err != nil || !fi.IsDir() {
+			return nil, SelectProjectResult{}, fmt.Errorf("project %q does not exist. Call create_project first", name)
+		}
+	}
+
+	s.mu.Lock()
+	s.currentProject = name
+	s.mu.Unlock()
+
+	return &mcp.CallToolResult{}, SelectProjectResult{
+		Status: "success",
+		Active: name,
+	}, nil
+}
+
+func (s *APIServer) handleGetProjectConfigMCP(ctx context.Context, req *mcp.CallToolRequest, args GetProjectConfigArgs) (*mcp.CallToolResult, GetProjectConfigResult, error) {
+	project := args.Project
+	if project == "" {
+		project = s.currentProject
+	}
+
+	configDBPath, _, _, _, _ := s.getProjectPaths(project)
+	s.ensureProjectDirs(project)
+
+	cfg, err := config.LoadConfig(configDBPath)
+	if err != nil {
+		return nil, GetProjectConfigResult{}, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	topicsStr := strings.Join(cfg.Topics, "\n")
+	anchorsStr := strings.Join(cfg.Anchors, "\n")
+
+	return &mcp.CallToolResult{}, GetProjectConfigResult{
+		Config:   *cfg,
+		Keywords: cfg.Keywords,
+		Topics:   topicsStr,
+		Anchors:  anchorsStr,
+	}, nil
+}
+
+func (s *APIServer) handleUpdateProjectConfigMCP(ctx context.Context, req *mcp.CallToolRequest, args UpdateProjectConfigArgs) (*mcp.CallToolResult, UpdateProjectConfigResult, error) {
+	project := args.Project
+	if project == "" {
+		project = s.currentProject
+	}
+
+	configDBPath, _, jsonlDir, dbDir, _ := s.getProjectPaths(project)
+	s.ensureProjectDirs(project)
+
+	configDB, err := s.getConfigDB(project)
+	if err != nil {
+		return nil, UpdateProjectConfigResult{}, fmt.Errorf("failed to connect to config DB: %w", err)
+	}
+
+	cfg, err := config.LoadConfig(configDBPath)
+	if err != nil {
+		return nil, UpdateProjectConfigResult{}, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	if args.Keywords != "" {
+		errs := openalex.ValidateKeywords(args.Keywords)
+		if len(errs) > 0 {
+			return nil, UpdateProjectConfigResult{}, fmt.Errorf("strict keywords validation failed: %s", strings.Join(errs, "; "))
+		}
+		cfg.Keywords = args.Keywords
+	}
+
+	if len(args.Topics) > 0 {
+		cfg.Topics = args.Topics
+	}
+
+	if len(args.Anchors) > 0 {
+		if len(args.Anchors) > 385 {
+			cfg.Anchors = args.Anchors[:385]
+		} else {
+			cfg.Anchors = args.Anchors
+		}
+	}
+
+	if args.DateFrom != "" {
+		cfg.Filters.DateFrom = args.DateFrom
+	}
+	if args.DateTo != "" {
+		cfg.Filters.DateTo = args.DateTo
+	}
+	if len(args.DocTypes) > 0 {
+		cfg.Filters.DocTypes = args.DocTypes
+	}
+
+	cfg.Output.JSONLDir = jsonlDir
+	cfg.Output.DBDir = dbDir
+
+	if err := config.SaveConfig(configDBPath, cfg); err != nil {
+		return nil, UpdateProjectConfigResult{}, fmt.Errorf("failed to save config to DB: %w", err)
+	}
+
+	topicsStr := strings.Join(cfg.Topics, "\n")
+	anchorsStr := strings.Join(cfg.Anchors, "\n")
+	label := args.Label
+	if label == "" {
+		label = "MCP Config Update"
+	}
+	_ = s.appendConfigRevision(configDB, cfg.Keywords, topicsStr, anchorsStr, label)
+
+	return &mcp.CallToolResult{}, UpdateProjectConfigResult{Status: "success"}, nil
+}
+
+// Anchor & Reference handlers
+func (s *APIServer) handleUploadReferenceMCP(ctx context.Context, req *mcp.CallToolRequest, args UploadReferenceArgs) (*mcp.CallToolResult, UploadReferenceResult, error) {
+	project := args.Project
+	if project == "" {
+		project = s.currentProject
+	}
+
+	if args.FilePath == "" {
+		return nil, UploadReferenceResult{}, fmt.Errorf("file_path parameter is required")
+	}
+
+	ext := strings.ToLower(filepath.Ext(args.FilePath))
+	if ext != ".csv" && ext != ".xlsx" && ext != ".xls" {
+		return nil, UploadReferenceResult{}, fmt.Errorf("unsupported file format %q. Please upload a .csv, .xlsx, or .xls file", ext)
+	}
+
+	_, _, _, _, uploadDir := s.getProjectPaths(project)
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		return nil, UploadReferenceResult{}, fmt.Errorf("failed to create uploads directory: %w", err)
+	}
+
+	srcFile, err := os.Open(args.FilePath)
+	if err != nil {
+		return nil, UploadReferenceResult{}, fmt.Errorf("failed to open source reference file: %w", err)
+	}
+	defer srcFile.Close()
+
+	safeName := fmt.Sprintf("upload_%d%s", time.Now().UnixNano(), ext)
+	destPath := filepath.Join(uploadDir, safeName)
+	dst, err := os.Create(destPath)
+	if err != nil {
+		return nil, UploadReferenceResult{}, fmt.Errorf("failed to create destination file in uploads: %w", err)
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, srcFile); err != nil {
+		return nil, UploadReferenceResult{}, fmt.Errorf("failed to write file to uploads directory: %w", err)
+	}
+
+	var headers []string
+	var rowCount int
+	if ext == ".csv" {
+		headers, rowCount, err = parseCSVHeadersAndCount(destPath)
+	} else {
+		headers, rowCount, err = parseExcelHeadersAndCount(destPath)
+	}
+
+	if err != nil {
+		return nil, UploadReferenceResult{}, fmt.Errorf("failed to parse uploaded file: %w", err)
+	}
+
+	return &mcp.CallToolResult{}, UploadReferenceResult{
+		Status:   "success",
+		Filename: safeName,
+		Columns:  headers,
+		RowCount: rowCount,
+	}, nil
+}
+
+func (s *APIServer) handleExtractQueryAndAnchorsMCP(ctx context.Context, req *mcp.CallToolRequest, args ExtractQueryAndAnchorsArgs) (*mcp.CallToolResult, ExtractQueryAndAnchorsResult, error) {
+	project := args.Project
+	if project == "" {
+		project = s.currentProject
+	}
+
+	if args.Filename == "" {
+		return nil, ExtractQueryAndAnchorsResult{}, fmt.Errorf("filename is required")
+	}
+	if args.TitleColumn == "" || args.AbstractColumn == "" {
+		return nil, ExtractQueryAndAnchorsResult{}, fmt.Errorf("title_column and abstract_column are required")
+	}
+
+	configDBPath, _, _, _, uploadsDir := s.getProjectPaths(project)
+	filePath := filepath.Join(uploadsDir, args.Filename)
+	ext := strings.ToLower(filepath.Ext(filePath))
+
+	var docs []string
+	var err error
+	if ext == ".csv" {
+		docs, err = loadCSVDocuments(filePath, args.TitleColumn, args.AbstractColumn)
+	} else {
+		docs, err = loadExcelDocuments(filePath, args.TitleColumn, args.AbstractColumn)
+	}
+
+	if err != nil {
+		return nil, ExtractQueryAndAnchorsResult{}, fmt.Errorf("failed to load documents: %w", err)
+	}
+
+	var dois []string
+	if args.DOIColumn != "" {
+		if ext == ".csv" {
+			dois, err = extractDOIsFromCSV(filePath, args.DOIColumn)
+		} else {
+			dois, err = extractDOIsFromExcel(filePath, args.DOIColumn)
+		}
+		if err != nil {
+			return nil, ExtractQueryAndAnchorsResult{}, fmt.Errorf("failed to extract DOIs: %w", err)
+		}
+
+		if len(dois) > 0 && args.SaveToConfig {
+			if len(dois) > 385 {
+				dois = dois[:385]
+			}
+			cfg, err := config.LoadConfig(configDBPath)
+			if err == nil {
+				cfg.Anchors = dois
+				_ = config.SaveConfig(configDBPath, cfg)
+			}
+		}
+	}
+
+	keywords := tfidf.ExtractKeywords(docs, 2, 3, 2, 0.85, 50)
+	var termList []string
+	for _, term := range keywords {
+		termList = append(termList, term.Term)
+	}
+	suggestedKeywords := strings.Join(termList, " OR ")
+
+	if args.SaveToConfig && suggestedKeywords != "" {
+		cfg, err := config.LoadConfig(configDBPath)
+		if err == nil {
+			cfg.Keywords = suggestedKeywords
+			_ = config.SaveConfig(configDBPath, cfg)
+		}
+	}
+
+	return &mcp.CallToolResult{}, ExtractQueryAndAnchorsResult{
+		Keywords:      suggestedKeywords,
+		ExtractedDOIs: dois,
+		AnchorsSaved:  len(dois),
+	}, nil
+}
+
+func (s *APIServer) handleValidateAnchorsMCP(ctx context.Context, req *mcp.CallToolRequest, args ValidateAnchorsArgs) (*mcp.CallToolResult, ValidateAnchorsResult, error) {
+	project := args.Project
+	if project == "" {
+		project = s.currentProject
+	}
+
+	configDBPath, _, _, _, _ := s.getProjectPaths(project)
+	cfg, err := config.LoadConfig(configDBPath)
+	if err != nil {
+		return nil, ValidateAnchorsResult{}, fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	if len(cfg.Anchors) == 0 {
+		return &mcp.CallToolResult{}, ValidateAnchorsResult{
+			Total:        0,
+			IndexedCount: 0,
+		}, nil
+	}
+
+	client := openalex.NewClient(cfg.API.Keys, cfg.API.Email, 200, 5, 3, 1)
+	var missing []string
+	var indexed int
+
+	for _, doi := range cfg.Anchors {
+		doi = strings.TrimSpace(doi)
+		if doi == "" {
+			continue
+		}
+		count, err := client.GetTotalCount(ctx, "doi:"+doi)
+		if err == nil && count > 0 {
+			indexed++
+		} else {
+			missing = append(missing, doi)
+		}
+	}
+
+	return &mcp.CallToolResult{}, ValidateAnchorsResult{
+		Total:          len(cfg.Anchors),
+		IndexedCount:   indexed,
+		MissingCount:   len(missing),
+		MissingAnchors: missing,
+	}, nil
+}
+
+// Search & sample handlers
+func (s *APIServer) handleGetSampleMCP(ctx context.Context, req *mcp.CallToolRequest, args GetSampleArgs) (*mcp.CallToolResult, GetSampleResult, error) {
+	project := args.Project
+	if project == "" {
+		project = s.currentProject
+	}
+
+	configDBPath, _, _, _, _ := s.getProjectPaths(project)
+	cfg, err := config.LoadConfig(configDBPath)
+	if err != nil {
+		return nil, GetSampleResult{}, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	size := args.Size
+	if size <= 0 {
+		size = 20
+	}
+	if size > 200 {
+		size = 200
+	}
+
+	client := openalex.NewClient(cfg.API.Keys, cfg.API.Email, 200, 5, 3, 1)
+
+	parts := []string{"title_and_abstract.search:" + cfg.Keywords}
+	if len(cfg.Topics) > 0 {
+		parts = append(parts, "primary_topic.id:"+strings.Join(cfg.Topics, "|"))
+	}
+	parts = append(parts, "from_publication_date:"+cfg.Filters.DateFrom)
+	parts = append(parts, "to_publication_date:"+cfg.Filters.DateTo)
+	if len(cfg.Filters.DocTypes) > 0 {
+		parts = append(parts, "type:"+strings.Join(cfg.Filters.DocTypes, "|"))
+	}
+	apiFilter := strings.Join(parts, ",")
+
+	count, err := client.GetTotalCount(ctx, apiFilter)
+	if err != nil {
+		count = 0
+	}
+
+	samples, err := client.FetchSample(ctx, apiFilter, size, 42)
+	if err != nil {
+		return nil, GetSampleResult{}, fmt.Errorf("failed to fetch sample from OpenAlex: %w", err)
+	}
+
+	return &mcp.CallToolResult{}, GetSampleResult{
+		TotalMatches: count,
+		Samples:      samples,
+	}, nil
+}
+
+// Exploration handlers
+func (s *APIServer) handleQuerySQLMCP(ctx context.Context, req *mcp.CallToolRequest, args QuerySQLArgs) (*mcp.CallToolResult, QuerySQLResult, error) {
+	project := args.Project
+	if project == "" {
+		project = s.currentProject
+	}
+
+	q := strings.TrimSpace(args.Query)
+	if q == "" {
+		return nil, QuerySQLResult{}, fmt.Errorf("query is empty")
+	}
+
+	upperQ := strings.ToUpper(q)
+	if !strings.HasPrefix(upperQ, "SELECT") {
+		return nil, QuerySQLResult{}, fmt.Errorf("only read-only SELECT queries are allowed via MCP")
+	}
+
+	badKeywords := []string{"INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "REPLACE", "TRUNCATE"}
+	for _, kw := range badKeywords {
+		if strings.Contains(upperQ, kw) {
+			return nil, QuerySQLResult{}, fmt.Errorf("unauthorized SQL keyword %q detected in query", kw)
+		}
+	}
+
+	_, _, _, dbDir, _ := s.getProjectPaths(project)
+	dbPath := filepath.Join(dbDir, "papers.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		return nil, QuerySQLResult{}, fmt.Errorf("duckdb database for project %q does not exist. Call convert_db first", project)
+	}
+
+	dbConn, err := sql.Open("duckdb", dbPath)
+	if err != nil {
+		return nil, QuerySQLResult{}, fmt.Errorf("failed to open database: %w", err)
+	}
+	defer dbConn.Close()
+
+	rows, err := dbConn.QueryContext(ctx, q)
+	if err != nil {
+		return nil, QuerySQLResult{}, fmt.Errorf("query execution failed: %w", err)
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, QuerySQLResult{}, fmt.Errorf("failed to fetch column names: %w", err)
+	}
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		columns := make([]interface{}, len(cols))
+		columnPointers := make([]interface{}, len(cols))
+		for i := range columns {
+			columnPointers[i] = &columns[i]
+		}
+
+		if err := rows.Scan(columnPointers...); err != nil {
+			return nil, QuerySQLResult{}, fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		rowMap := make(map[string]interface{})
+		for i, colName := range cols {
+			val := columns[i]
+			if b, ok := val.([]byte); ok {
+				rowMap[colName] = string(b)
+			} else {
+				rowMap[colName] = val
+			}
+		}
+		results = append(results, rowMap)
+	}
+
+	return &mcp.CallToolResult{}, QuerySQLResult{
+		Columns: cols,
+		Rows:    results,
+	}, nil
+}
+
+func (s *APIServer) handleGetStatisticsMCP(ctx context.Context, req *mcp.CallToolRequest, args GetStatisticsArgs) (*mcp.CallToolResult, GetStatisticsResult, error) {
+	project := args.Project
+	if project == "" {
+		project = s.currentProject
+	}
+
+	_, _, _, dbDir, _ := s.getProjectPaths(project)
+	dbPath := filepath.Join(dbDir, "papers.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		return nil, GetStatisticsResult{}, fmt.Errorf("duckdb database for project %q does not exist. Call convert_db first", project)
+	}
+
+	dbConn, err := sql.Open("duckdb", dbPath)
+	if err != nil {
+		return nil, GetStatisticsResult{}, fmt.Errorf("failed to open database: %w", err)
+	}
+	defer dbConn.Close()
+
+	var totalPapers, totalAuthors, totalInstitutions, totalCountries int
+	var missingCountries, missingInsts, imputedCountries int
+
+	dbConn.QueryRow("SELECT COUNT(*) FROM papers").Scan(&totalPapers)
+	dbConn.QueryRow("SELECT COUNT(*) FROM authors").Scan(&totalAuthors)
+	dbConn.QueryRow("SELECT COUNT(*) FROM institutions").Scan(&totalInstitutions)
+	dbConn.QueryRow("SELECT COUNT(DISTINCT country_code) FROM institutions").Scan(&totalCountries)
+
+	dbConn.QueryRow("SELECT COUNT(*) FROM contributions WHERE country_code IS NULL OR country_code = ''").Scan(&missingCountries)
+	dbConn.QueryRow("SELECT COUNT(*) FROM contributions WHERE institution_id IS NULL OR institution_id = ''").Scan(&missingInsts)
+	dbConn.QueryRow("SELECT COUNT(*) FROM contributions WHERE country_code IS NOT NULL AND country_code != '' AND (imputed = true OR imputed = 1)").Scan(&imputedCountries)
+
+	var completeness float64
+	totalRows := 1
+	dbConn.QueryRow("SELECT COUNT(*) FROM contributions").Scan(&totalRows)
+	if totalRows > 0 {
+		completeness = float64(totalRows-missingCountries) / float64(totalRows) * 100.0
+	}
+
+	return &mcp.CallToolResult{}, GetStatisticsResult{
+		TotalPapers:            totalPapers,
+		TotalAuthors:           totalAuthors,
+		TotalInstitutions:      totalInstitutions,
+		TotalCountries:         totalCountries,
+		MissingCountryCount:    missingCountries,
+		MissingInstitutionID:   missingInsts,
+		ImputedCountryCount:    imputedCountries,
+		ImputationCompleteness: completeness,
+	}, nil
+}
+
+// WoS Integration handlers
+func (s *APIServer) handleUploadWoSMCP(ctx context.Context, req *mcp.CallToolRequest, args UploadWoSArgs) (*mcp.CallToolResult, UploadWoSResult, error) {
+	project := args.Project
+	if project == "" {
+		project = s.currentProject
+	}
+
+	if args.FilePath == "" {
+		return nil, UploadWoSResult{}, fmt.Errorf("file_path is required")
+	}
+
+	ext := strings.ToLower(filepath.Ext(args.FilePath))
+	if ext != ".csv" && ext != ".xlsx" && ext != ".xls" && ext != ".txt" {
+		return nil, UploadWoSResult{}, fmt.Errorf("unsupported WoS format %q. Please upload a .csv, .xlsx, .xls, or .txt file", ext)
+	}
+
+	_, _, _, _, uploadDir := s.getProjectPaths(project)
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		return nil, UploadWoSResult{}, fmt.Errorf("failed to create uploads directory: %w", err)
+	}
+
+	srcFile, err := os.Open(args.FilePath)
+	if err != nil {
+		return nil, UploadWoSResult{}, fmt.Errorf("failed to open source WoS file: %w", err)
+	}
+	defer srcFile.Close()
+
+	safeName := fmt.Sprintf("wos_%d%s", time.Now().UnixNano(), ext)
+	destPath := filepath.Join(uploadDir, safeName)
+	dst, err := os.Create(destPath)
+	if err != nil {
+		return nil, UploadWoSResult{}, fmt.Errorf("failed to create destination file in uploads: %w", err)
+	}
+	defer dst.Close()
+
+	written, err := io.Copy(dst, srcFile)
+	if err != nil {
+		return nil, UploadWoSResult{}, fmt.Errorf("failed to write WoS file: %w", err)
+	}
+
+	return &mcp.CallToolResult{}, UploadWoSResult{
+		Status:   "success",
+		Filename: safeName,
+		Size:     written,
+	}, nil
+}
+
+func (s *APIServer) handleImportWoSDoisMCP(ctx context.Context, req *mcp.CallToolRequest, args ImportWoSDoisArgs) (*mcp.CallToolResult, ImportWoSDoisResult, error) {
+	project := args.Project
+	if project == "" {
+		project = s.currentProject
+	}
+
+	if args.Filename == "" {
+		return nil, ImportWoSDoisResult{}, fmt.Errorf("filename parameter is required")
+	}
+
+	_, _, _, dbDir, uploadsDir := s.getProjectPaths(project)
+	filePath := filepath.Join(uploadsDir, args.Filename)
+	dbPath := filepath.Join(dbDir, "papers.db")
+
+	if _, err := os.Stat(filePath); err != nil {
+		return nil, ImportWoSDoisResult{}, fmt.Errorf("file %q not found in uploads", args.Filename)
+	}
+
+	ext := strings.ToLower(filepath.Ext(filePath))
+	var err error
+	if ext == ".csv" {
+		err = wos.ImportWoSCSV(filePath, dbPath)
+	} else if ext == ".xlsx" || ext == ".xls" {
+		err = wos.ImportWoSExcel(filePath, dbPath)
+	} else {
+		return nil, ImportWoSDoisResult{}, fmt.Errorf("unsupported file extension %q for direct import", ext)
+	}
+
+	if err != nil {
+		return nil, ImportWoSDoisResult{}, fmt.Errorf("WoS import failed: %w", err)
+	}
+
+	dbConn, err := sql.Open("duckdb", dbPath)
+	var count int
+	if err == nil {
+		defer dbConn.Close()
+		dbConn.QueryRow("SELECT COUNT(*) FROM wos_records").Scan(&count)
+	}
+
+	return &mcp.CallToolResult{}, ImportWoSDoisResult{
+		Status:          "success",
+		ImportedRecords: count,
+	}, nil
+}
+
+func (s *APIServer) handleSyncWoSOpenAlexMCP(ctx context.Context, req *mcp.CallToolRequest, args SyncWoSOpenAlexArgs) (*mcp.CallToolResult, SyncWoSOpenAlexResult, error) {
+	project := args.Project
+	if project == "" {
+		project = s.currentProject
+	}
+
+	if args.Filename == "" {
+		return nil, SyncWoSOpenAlexResult{}, fmt.Errorf("filename is required")
+	}
+
+	_, _, _, dbDir, uploadsDir := s.getProjectPaths(project)
+	filePath := filepath.Join(uploadsDir, args.Filename)
+	dbPath := filepath.Join(dbDir, "papers.db")
+
+	if _, err := os.Stat(filePath); err != nil {
+		return nil, SyncWoSOpenAlexResult{}, fmt.Errorf("file %q not found in uploads", args.Filename)
+	}
+
+	report, err := wos.CompareDOIs(filePath, dbPath)
+	if err != nil {
+		return nil, SyncWoSOpenAlexResult{}, fmt.Errorf("sync comparison failed: %w", err)
+	}
+
+	return &mcp.CallToolResult{}, SyncWoSOpenAlexResult{
+		TotalWoS:          report.TotalWoS,
+		TotalDB:           report.TotalDB,
+		ExactDOIMatches:   report.ExactDOIMatches,
+		FuzzyTitleMatches: report.FuzzyTitleMatches,
+		OverlapPercentage: report.OverlapPercent,
+	}, nil
 }

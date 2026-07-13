@@ -873,6 +873,86 @@ func TestMCPResources(t *testing.T) {
 	}
 }
 
+func TestNewMCPTools(t *testing.T) {
+	dbPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	server := NewAPIServer("localhost:8080", dbPath)
+
+	ctx := context.Background()
+
+	// Test 1: create_project
+	resCreate, createResult, err := server.handleCreateProjectMCP(ctx, nil, CreateProjectArgs{Name: "test-mcp-project"})
+	if err != nil {
+		t.Fatalf("create_project MCP tool failed: %v", err)
+	}
+	if createResult.Status != "success" || createResult.Name != "test-mcp-project" {
+		t.Errorf("unexpected create_project result: %+v", createResult)
+	}
+	if resCreate == nil {
+		t.Errorf("expected non-nil call tool result")
+	}
+
+	// Test 2: select_project
+	resSelect, selectResult, err := server.handleSelectProjectMCP(ctx, nil, SelectProjectArgs{Project: "test-mcp-project"})
+	if err != nil {
+		t.Fatalf("select_project MCP tool failed: %v", err)
+	}
+	if selectResult.Status != "success" || selectResult.Active != "test-mcp-project" {
+		t.Errorf("unexpected select_project result: %+v", selectResult)
+	}
+	if resSelect == nil {
+		t.Errorf("expected non-nil call tool result")
+	}
+	if server.currentProject != "test-mcp-project" {
+		t.Errorf("expected currentProject to be 'test-mcp-project', got %q", server.currentProject)
+	}
+
+	// Test 3: list_projects
+	_, listResult, err := server.handleListProjectsMCP(ctx, nil, ListProjectsArgs{})
+	if err != nil {
+		t.Fatalf("list_projects MCP tool failed: %v", err)
+	}
+	found := false
+	for _, p := range listResult.Projects {
+		if p == "test-mcp-project" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected 'test-mcp-project' in projects list, got %v", listResult.Projects)
+	}
+
+	defer os.RemoveAll("projects/test-mcp-project")
+
+	// Test 4: update_project_config
+	_, updateResult, err := server.handleUpdateProjectConfigMCP(ctx, nil, UpdateProjectConfigArgs{
+		Project:  "test-mcp-project",
+		Keywords: "carbon nanotubes OR graphene",
+		Topics:   []string{"T10001", "T10002"},
+		Label:    "Initial MCP config",
+	})
+	if err != nil {
+		t.Fatalf("update_project_config MCP tool failed: %v", err)
+	}
+	if updateResult.Status != "success" {
+		t.Errorf("expected status 'success', got %q", updateResult.Status)
+	}
+
+	// Test 5: get_project_config
+	_, getResult, err := server.handleGetProjectConfigMCP(ctx, nil, GetProjectConfigArgs{Project: "test-mcp-project"})
+	if err != nil {
+		t.Fatalf("get_project_config MCP tool failed: %v", err)
+	}
+	if getResult.Keywords != "carbon nanotubes OR graphene" {
+		t.Errorf("expected keywords 'carbon nanotubes OR graphene', got %q", getResult.Keywords)
+	}
+	if getResult.Topics != "T10001\nT10002" {
+		t.Errorf("expected topics 'T10001\\nT10002', got %q", getResult.Topics)
+	}
+}
+
 
 
 
