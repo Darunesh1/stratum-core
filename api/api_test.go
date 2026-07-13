@@ -940,16 +940,35 @@ func TestNewMCPTools(t *testing.T) {
 		t.Errorf("expected status 'success', got %q", updateResult.Status)
 	}
 
-	// Test 5: get_project_config
+	// Test 5: get_project_config (by default should hide keywords/topics)
 	_, getResult, err := server.handleGetProjectConfigMCP(ctx, nil, GetProjectConfigArgs{Project: "test-mcp-project"})
 	if err != nil {
 		t.Fatalf("get_project_config MCP tool failed: %v", err)
 	}
-	if getResult.Keywords != "carbon nanotubes OR graphene" {
-		t.Errorf("expected keywords 'carbon nanotubes OR graphene', got %q", getResult.Keywords)
+	if getResult.Keywords != "" {
+		t.Errorf("expected keywords to be hidden by default, got %q", getResult.Keywords)
 	}
-	if getResult.Topics != "T10001\nT10002" {
-		t.Errorf("expected topics 'T10001\\nT10002', got %q", getResult.Topics)
+	if getResult.Topics != "" {
+		t.Errorf("expected topics to be hidden by default, got %q", getResult.Topics)
+	}
+	if getResult.KeywordsLen != len("carbon nanotubes OR graphene") {
+		t.Errorf("expected KeywordsLen %d, got %d", len("carbon nanotubes OR graphene"), getResult.KeywordsLen)
+	}
+
+	// Test 6: get_project_config explicitly retrieving query and topics
+	_, getResultFull, err := server.handleGetProjectConfigMCP(ctx, nil, GetProjectConfigArgs{
+		Project:       "test-mcp-project",
+		IncludeQuery:  true,
+		IncludeTopics: true,
+	})
+	if err != nil {
+		t.Fatalf("get_project_config full retrieval MCP tool failed: %v", err)
+	}
+	if getResultFull.Keywords != "carbon nanotubes OR graphene" {
+		t.Errorf("expected keywords 'carbon nanotubes OR graphene', got %q", getResultFull.Keywords)
+	}
+	if getResultFull.Topics != "T10001\nT10002" {
+		t.Errorf("expected topics 'T10001\\nT10002', got %q", getResultFull.Topics)
 	}
 }
 
