@@ -25,6 +25,7 @@ import (
 	"stratum/tfidf"
 
 	"github.com/extrame/xls"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -57,19 +58,42 @@ type APIServer struct {
 	pipelineStatuses map[string]*PipelineStatus
 	projectMutexes   map[string]*sync.Mutex
 	server           *http.Server
+	mcpServer        *mcp.Server
+	mcpHandler       *mcp.SSEHandler
+	currentProject   string
 	mu               sync.Mutex
 }
 
 // NewAPIServer creates a new API server on the specified address.
 func NewAPIServer(addr string, dbPath string) *APIServer {
-	return &APIServer{
+	s := &APIServer{
 		addr:             addr,
 		dbPath:           dbPath,
 		dbManagers:       make(map[string]*db.DBManager),
 		configDBs:        make(map[string]*sql.DB),
 		pipelineStatuses: make(map[string]*PipelineStatus),
 		projectMutexes:   make(map[string]*sync.Mutex),
+		currentProject:   "default",
 	}
+
+	s.mcpServer = mcp.NewServer(&mcp.Implementation{
+		Name:    "stratum-mcp-sse",
+		Version: "1.0.0",
+	}, nil)
+
+	if err := s.RegisterMCPTools(); err != nil {
+		log.Printf("[WARNING] Failed to register MCP tools: %v", err)
+	}
+
+	if err := s.RegisterMCPResources(); err != nil {
+		log.Printf("[WARNING] Failed to register MCP resources: %v", err)
+	}
+
+	s.mcpHandler = mcp.NewSSEHandler(func(request *http.Request) *mcp.Server {
+		return s.mcpServer
+	}, &mcp.SSEOptions{})
+
+	return s
 }
 
 // RegisterRoutes registers endpoints for dashboard metrics, query execution, files, and config.
@@ -87,9 +111,11 @@ func (s *APIServer) RegisterRoutes() error {
 	mux.HandleFunc("/api/tfidf", s.handleTFIDF)
 	mux.HandleFunc("/api/query/validate", s.handleQueryValidate)
 	mux.HandleFunc("/api/openalex/count", s.handleOpenAlexCount)
+	mux.HandleFunc("/api/openalex/sample", s.handleOpenAlexSample)
 	mux.HandleFunc("/api/openalex/topics", s.handleOpenAlexTopics)
 	mux.HandleFunc("/api/projects", s.handleListProjects)
 	mux.HandleFunc("/api/projects/create", s.handleCreateProject)
+	mux.Handle("/api/mcp", s.mcpHandler)
 
 	// Get sub-filesystem for frontend assets
 	subFS, err := fs.Sub(frontendFS, "dist")
@@ -903,12 +929,13 @@ func (s *APIServer) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract headers
+	// Extract headers and row count
 	var headers []string
+	var rowCount int
 	if ext == ".csv" {
-		headers, err = parseCSVHeaders(filePath)
+		headers, rowCount, err = parseCSVHeadersAndCount(filePath)
 	} else {
-		headers, err = parseExcelHeaders(filePath)
+		headers, rowCount, err = parseExcelHeadersAndCount(filePath)
 	}
 
 	if err != nil {
@@ -918,9 +945,63 @@ func (s *APIServer) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"filename": safeName,
-		"columns":  headers,
+		"filename":  safeName,
+		"columns":   headers,
+		"row_count": rowCount,
 	})
+}
+
+func parseCSVHeadersAndCount(filePath string) ([]string, int, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer f.Close()
+
+	reader := csv.NewReader(f)
+	reader.LazyQuotes = true
+	reader.FieldsPerRecord = -1
+	
+	rows, err := reader.ReadAll()
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(rows) == 0 {
+		return nil, 0, fmt.Errorf("empty file")
+	}
+	return rows[0], len(rows) - 1, nil // subtract header row
+}
+
+func parseExcelHeadersAndCount(filePath string) ([]string, int, error) {
+	if strings.HasSuffix(strings.ToLower(filePath), ".xls") {
+		rows, err := parseXLSRows(filePath)
+		if err != nil {
+			return nil, 0, err
+		}
+		if len(rows) == 0 {
+			return nil, 0, fmt.Errorf("empty sheet")
+		}
+		return rows[0], len(rows) - 1, nil
+	}
+
+	f, err := excelize.OpenFile(filePath)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer f.Close()
+
+	sheets := f.GetSheetList()
+	if len(sheets) == 0 {
+		return nil, 0, fmt.Errorf("no sheets found in Excel file")
+	}
+	rows, err := f.GetRows(sheets[0])
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(rows) == 0 {
+		return nil, 0, fmt.Errorf("empty sheet")
+	}
+	return rows[0], len(rows) - 1, nil
 }
 
 func parseCSVHeaders(filePath string) ([]string, error) {
@@ -1375,6 +1456,166 @@ func (s *APIServer) handleOpenAlexCount(w http.ResponseWriter, r *http.Request) 
 		"anchors_matched": matchedCount,
 		"anchors_missing": missingDOIs,
 	})
+}
+
+func (s *APIServer) handleOpenAlexSample(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error": "Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Query      string   `json:"query"`
+		Keys       []string `json:"keys"`
+		Email      string   `json:"email"`
+		DateFrom   string   `json:"date_from"`
+		DateTo     string   `json:"date_to"`
+		DocTypes   []string `json:"doc_types"`
+		Topics     []string `json:"topics"`
+		SampleSize int      `json:"sample_size"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body: " + err.Error()})
+		return
+	}
+
+	// Validate query keywords
+	if errs := openalex.ValidateKeywords(req.Query); len(errs) > 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Query validation failed: " + strings.Join(errs, "; ")})
+		return
+	}
+
+	if req.Email == "" {
+		req.Email = "your@email.com"
+	}
+	if req.DateFrom == "" {
+		req.DateFrom = "2003-01-01"
+	}
+	if req.DateTo == "" {
+		req.DateTo = "2024-12-31"
+	}
+	if req.SampleSize <= 0 {
+		req.SampleSize = 385
+	}
+
+	// Instantiate client
+	client := openalex.NewClient(req.Keys, req.Email, 200, 5, 3, 1)
+
+	// Build the API filter query
+	parts := []string{"title_and_abstract.search:" + req.Query}
+	var validTopics []string
+	for _, t := range req.Topics {
+		if openalex.ValidateTopicFormat(t) {
+			validTopics = append(validTopics, t)
+		}
+	}
+	if len(validTopics) > 0 {
+		parts = append(parts, "primary_topic.id:"+strings.Join(validTopics, "|"))
+	}
+	parts = append(parts, "from_publication_date:"+req.DateFrom)
+	parts = append(parts, "to_publication_date:"+req.DateTo)
+	if len(req.DocTypes) > 0 {
+		parts = append(parts, "type:"+strings.Join(req.DocTypes, "|"))
+	}
+	filter := strings.Join(parts, ",")
+
+	// Fetch sample works (passing 0 for seed triggers automatic generation of a time-based random seed)
+	works, err := client.FetchSample(r.Context(), filter, req.SampleSize, 0)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "OpenAlex sample request failed: " + err.Error()})
+		return
+	}
+
+	// Format as CSV
+	project := r.URL.Query().Get("project")
+	if project == "" {
+		project = "openalex"
+	}
+	filename := fmt.Sprintf("%s_sample_%d.csv", project, req.SampleSize)
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	w.WriteHeader(http.StatusOK)
+
+	writer := csv.NewWriter(w)
+	defer writer.Flush()
+
+	header := []string{
+		"id", "doi", "title", "publication_year", "type",
+		"topic_id", "topic_name", "abstract_text",
+		"cited_by_count", "fwci", "institutions_count", "countries_count",
+	}
+	if err := writer.Write(header); err != nil {
+		return
+	}
+
+	for _, p := range works {
+		topicID := p.PrimaryTopic.ID
+		if idx := strings.LastIndex(topicID, "/"); idx != -1 {
+			topicID = topicID[idx+1:]
+		}
+
+		abstractText := reconstructAbstract(p.AbstractInvertedIndex)
+
+		row := []string{
+			p.ID,
+			p.DOI,
+			p.Title,
+			fmt.Sprintf("%d", p.PublicationYear),
+			p.Type,
+			topicID,
+			p.PrimaryTopic.DisplayName,
+			abstractText,
+			fmt.Sprintf("%d", p.CitedByCount),
+			fmt.Sprintf("%g", p.FWCI),
+			fmt.Sprintf("%d", p.InstitutionsDistinctCount),
+			fmt.Sprintf("%d", p.CountriesDistinctCount),
+		}
+		if err := writer.Write(row); err != nil {
+			return
+		}
+	}
+}
+
+func reconstructAbstract(inverted map[string][]int) string {
+	if len(inverted) == 0 {
+		return ""
+	}
+	maxIdx := -1
+	for _, positions := range inverted {
+		for _, pos := range positions {
+			if pos > maxIdx {
+				maxIdx = pos
+			}
+		}
+	}
+	if maxIdx < 0 {
+		return ""
+	}
+
+	words := make([]string, maxIdx+1)
+	for word, positions := range inverted {
+		for _, pos := range positions {
+			if pos >= 0 && pos <= maxIdx {
+				words[pos] = word
+			}
+		}
+	}
+
+	var filtered []string
+	for _, w := range words {
+		if w != "" {
+			filtered = append(filtered, w)
+		}
+	}
+	return strings.Join(filtered, " ")
 }
 
 func (s *APIServer) handleOpenAlexTopics(w http.ResponseWriter, r *http.Request) {

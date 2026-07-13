@@ -2,7 +2,9 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"stratum/config"
 	"stratum/db"
 )
@@ -704,3 +707,272 @@ func TestPipelineRouteWithInvalidQuery(t *testing.T) {
 		t.Errorf("expected error message to contain 'Query validation failed', got %s", wRun.Body.String())
 	}
 }
+
+func TestOpenAlexSampleRoute(t *testing.T) {
+	dbPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	server := NewAPIServer("localhost:8080", dbPath)
+	err := server.RegisterRoutes()
+	if err != nil {
+		t.Fatalf("RegisterRoutes failed: %v", err)
+	}
+
+	// Mock OpenAlex API response
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintln(w, `{
+			"meta": {"count": 1},
+			"results": [{
+				"id": "https://openalex.org/W1",
+				"doi": "https://doi.org/10.1234/test",
+				"title": "Test Paper Title",
+				"publication_year": 2026,
+				"type": "journal-article",
+				"primary_topic": {
+					"id": "https://openalex.org/T10001",
+					"display_name": "Test Topic Name"
+				},
+				"abstract_inverted_index": {
+					"Hello": [0],
+					"World": [1]
+				},
+				"cited_by_count": 5,
+				"fwci": 1.25,
+				"institutions_distinct_count": 2,
+				"countries_distinct_count": 1
+			}]
+		}`)
+	}))
+	defer ts.Close()
+
+	mockURL, _ := url.Parse(ts.URL)
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = &redirectTransport{targetURL: mockURL, origTransport: origTransport}
+	defer func() { http.DefaultTransport = origTransport }()
+
+	bodyJSON, _ := json.Marshal(map[string]interface{}{
+		"query":       "test query",
+		"email":       "test@example.com",
+		"sample_size": 1,
+	})
+
+	req := httptest.NewRequest("POST", "/api/openalex/sample", bytes.NewBuffer(bodyJSON))
+	w := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+	}
+
+	contentType := w.Header().Get("Content-Type")
+	if contentType != "text/csv" {
+		t.Errorf("expected Content-Type text/csv, got %s", contentType)
+	}
+
+	contentDisposition := w.Header().Get("Content-Disposition")
+	if !strings.Contains(contentDisposition, "openalex_sample_1.csv") {
+		t.Errorf("expected Content-Disposition to contain openalex_sample_1.csv, got %s", contentDisposition)
+	}
+
+	// Verify CSV contents
+	csvReader := csv.NewReader(w.Body)
+	records, err := csvReader.ReadAll()
+	if err != nil {
+		t.Fatalf("failed to read CSV response: %v", err)
+	}
+
+	if len(records) != 2 { // Header + 1 Row
+		t.Fatalf("expected 2 CSV rows, got %d", len(records))
+	}
+
+	// Header verify
+	expectedHeader := []string{
+		"id", "doi", "title", "publication_year", "type",
+		"topic_id", "topic_name", "abstract_text",
+		"cited_by_count", "fwci", "institutions_count", "countries_count",
+	}
+	for i, h := range expectedHeader {
+		if records[0][i] != h {
+			t.Errorf("header column %d: expected %s, got %s", i, h, records[0][i])
+		}
+	}
+
+	// Row verify
+	row := records[1]
+	if row[0] != "https://openalex.org/W1" || row[1] != "https://doi.org/10.1234/test" || row[2] != "Test Paper Title" {
+		t.Errorf("unexpected row data fields: %v", row)
+	}
+	if row[3] != "2026" || row[4] != "journal-article" || row[5] != "T10001" || row[6] != "Test Topic Name" {
+		t.Errorf("unexpected topic or metadata fields: %v", row)
+	}
+	if row[7] != "Hello World" { // Reconstructed abstract text
+		t.Errorf("expected reconstructed abstract 'Hello World', got %q", row[7])
+	}
+	if row[8] != "5" || row[9] != "1.25" || row[10] != "2" || row[11] != "1" {
+		t.Errorf("unexpected stats fields: %v", row)
+	}
+}
+
+func TestMCPRoute(t *testing.T) {
+	dbPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	server := NewAPIServer("localhost:8080", dbPath)
+	err := server.RegisterRoutes()
+	if err != nil {
+		t.Fatalf("RegisterRoutes failed: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	req := httptest.NewRequest("GET", "/api/mcp", nil).WithContext(ctx)
+	req.Header.Set("Accept", "text/event-stream")
+	w := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected GET status 200, got %d", w.Code)
+	}
+
+	contentType := w.Header().Get("Content-Type")
+	if !strings.Contains(contentType, "text/event-stream") {
+		t.Errorf("expected Content-Type to contain text/event-stream, got %q", contentType)
+	}
+
+	bodyStr := w.Body.String()
+	if !strings.Contains(bodyStr, "event: endpoint") {
+		t.Errorf("expected body to contain 'event: endpoint' initialization, got %q", bodyStr)
+	}
+}
+
+func TestMCPResources(t *testing.T) {
+	dbPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	server := NewAPIServer("localhost:8080", dbPath)
+
+	// Test Knowledge Resource Handler
+	hKnowledge := server.handleReadKnowledgeResource()
+	reqK := &mcp.ReadResourceRequest{
+		Params: &mcp.ReadResourceParams{
+			URI: "stratum://knowledge/agents/search",
+		},
+	}
+
+	resK, err := hKnowledge(context.Background(), reqK)
+	if err != nil {
+		t.Fatalf("Knowledge resource read failed: %v", err)
+	}
+	if len(resK.Contents) == 0 {
+		t.Fatalf("expected contents, got empty")
+	}
+	if !strings.Contains(resK.Contents[0].Text, "Search Agent") {
+		t.Errorf("expected text to contain 'Search Agent', got %q", resK.Contents[0].Text)
+	}
+}
+
+func TestNewMCPTools(t *testing.T) {
+	dbPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	server := NewAPIServer("localhost:8080", dbPath)
+
+	ctx := context.Background()
+
+	// Test 1: create_project
+	resCreate, createResult, err := server.handleCreateProjectMCP(ctx, nil, CreateProjectArgs{Name: "test-mcp-project"})
+	if err != nil {
+		t.Fatalf("create_project MCP tool failed: %v", err)
+	}
+	if createResult.Status != "success" || createResult.Name != "test-mcp-project" {
+		t.Errorf("unexpected create_project result: %+v", createResult)
+	}
+	if resCreate == nil {
+		t.Errorf("expected non-nil call tool result")
+	}
+
+	// Test 2: select_project
+	resSelect, selectResult, err := server.handleSelectProjectMCP(ctx, nil, SelectProjectArgs{Project: "test-mcp-project"})
+	if err != nil {
+		t.Fatalf("select_project MCP tool failed: %v", err)
+	}
+	if selectResult.Status != "success" || selectResult.Active != "test-mcp-project" {
+		t.Errorf("unexpected select_project result: %+v", selectResult)
+	}
+	if resSelect == nil {
+		t.Errorf("expected non-nil call tool result")
+	}
+	if server.currentProject != "test-mcp-project" {
+		t.Errorf("expected currentProject to be 'test-mcp-project', got %q", server.currentProject)
+	}
+
+	// Test 3: list_projects
+	_, listResult, err := server.handleListProjectsMCP(ctx, nil, ListProjectsArgs{})
+	if err != nil {
+		t.Fatalf("list_projects MCP tool failed: %v", err)
+	}
+	found := false
+	for _, p := range listResult.Projects {
+		if p == "test-mcp-project" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected 'test-mcp-project' in projects list, got %v", listResult.Projects)
+	}
+
+	defer os.RemoveAll("projects/test-mcp-project")
+
+	// Test 4: update_project_config
+	_, updateResult, err := server.handleUpdateProjectConfigMCP(ctx, nil, UpdateProjectConfigArgs{
+		Project:  "test-mcp-project",
+		Keywords: "carbon nanotubes OR graphene",
+		Topics:   []string{"T10001", "T10002"},
+		Label:    "Initial MCP config",
+	})
+	if err != nil {
+		t.Fatalf("update_project_config MCP tool failed: %v", err)
+	}
+	if updateResult.Status != "success" {
+		t.Errorf("expected status 'success', got %q", updateResult.Status)
+	}
+
+	// Test 5: get_project_config (by default should hide keywords/topics)
+	_, getResult, err := server.handleGetProjectConfigMCP(ctx, nil, GetProjectConfigArgs{Project: "test-mcp-project"})
+	if err != nil {
+		t.Fatalf("get_project_config MCP tool failed: %v", err)
+	}
+	if getResult.Keywords != "" {
+		t.Errorf("expected keywords to be hidden by default, got %q", getResult.Keywords)
+	}
+	if getResult.Topics != "" {
+		t.Errorf("expected topics to be hidden by default, got %q", getResult.Topics)
+	}
+	if getResult.KeywordsLen != len("carbon nanotubes OR graphene") {
+		t.Errorf("expected KeywordsLen %d, got %d", len("carbon nanotubes OR graphene"), getResult.KeywordsLen)
+	}
+
+	// Test 6: get_project_config explicitly retrieving query and topics
+	_, getResultFull, err := server.handleGetProjectConfigMCP(ctx, nil, GetProjectConfigArgs{
+		Project:       "test-mcp-project",
+		IncludeQuery:  true,
+		IncludeTopics: true,
+	})
+	if err != nil {
+		t.Fatalf("get_project_config full retrieval MCP tool failed: %v", err)
+	}
+	if getResultFull.Keywords != "carbon nanotubes OR graphene" {
+		t.Errorf("expected keywords 'carbon nanotubes OR graphene', got %q", getResultFull.Keywords)
+	}
+	if getResultFull.Topics != "T10001\nT10002" {
+		t.Errorf("expected topics 'T10001\\nT10002', got %q", getResultFull.Topics)
+	}
+}
+
+
+
+
+

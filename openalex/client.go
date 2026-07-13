@@ -124,6 +124,12 @@ type WorkPageResponse struct {
 	Results []Work       `json:"results"`
 }
 
+// RawPageResponse wraps metadata and results as raw JSON messages to fetch full paper records.
+type RawPageResponse struct {
+	Meta    MetaResponse      `json:"meta"`
+	Results []json.RawMessage `json:"results"`
+}
+
 type MetaResponse struct {
 	Count      int    `json:"count"`
 	NextCursor string `json:"next_cursor"`
@@ -379,6 +385,128 @@ func (c *OpenAlexClient) FetchPage(ctx context.Context, apiFilter string, cursor
 	return &resp, nil
 }
 
+// FetchPageRaw retrieves a single page of results for a given filter and cursor, returning the raw JSON response body.
+func (c *OpenAlexClient) FetchPageRaw(ctx context.Context, apiFilter string, cursor string) ([]byte, error) {
+	baseURL := c.baseURL
+	if baseURL == "" {
+		baseURL = "https://api.openalex.org"
+	}
+	u, err := url.Parse(baseURL + "/works")
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	q.Set("filter", apiFilter)
+	q.Set("per_page", fmt.Sprintf("%d", c.perPage))
+	q.Set("cursor", cursor)
+	// We omit the 'select' query parameter to download the full records
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	c.semaphore <- struct{}{}
+	defer func() { <-c.semaphore }()
+
+	return c.doRequest(ctx, req)
+}
+
+// FetchSamplePage retrieves a single page of random results for a given filter using the OpenAlex sample and seed parameters.
+func (c *OpenAlexClient) FetchSamplePage(ctx context.Context, apiFilter string, limit int, seed int) (*WorkPageResponse, error) {
+	baseURL := c.baseURL
+	if baseURL == "" {
+		baseURL = "https://api.openalex.org"
+	}
+	u, err := url.Parse(baseURL + "/works")
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	q.Set("filter", apiFilter)
+	q.Set("sample", fmt.Sprintf("%d", limit))
+	q.Set("seed", fmt.Sprintf("%d", seed))
+	q.Set("select", "id,doi,title,publication_year,publication_date,type,primary_location,open_access,cited_by_count,citation_normalized_percentile,fwci,primary_topic,authorships,institutions_distinct_count,countries_distinct_count,updated_date,abstract_inverted_index")
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	c.semaphore <- struct{}{}
+	defer func() { <-c.semaphore }()
+
+	body, err := c.doRequest(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp WorkPageResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, err
+	}
+
+	return &resp, nil
+}
+
+// FetchSample fetches and deduplicates up to k random matching papers from OpenAlex.
+// It performs multiple page fetches with incremented seeds if k > 200.
+// If seed <= 0, a random seed is automatically generated.
+func (c *OpenAlexClient) FetchSample(ctx context.Context, apiFilter string, k int, seed int) ([]Work, error) {
+	if seed <= 0 {
+		seed = int(time.Now().UnixNano() % 2147483647)
+		if seed < 0 {
+			seed = -seed
+		}
+	}
+
+	var results []Work
+	seen := make(map[string]bool)
+	limitPerPage := 200
+
+	page := 0
+	for len(results) < k {
+		limit := k - len(results)
+		if limit > limitPerPage {
+			limit = limitPerPage
+		}
+
+		currentSeed := seed + page
+		page++
+
+		resp, err := c.FetchSamplePage(ctx, apiFilter, limit, currentSeed)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp == nil || len(resp.Results) == 0 {
+			break
+		}
+
+		newAdded := 0
+		for _, w := range resp.Results {
+			if !seen[w.ID] {
+				seen[w.ID] = true
+				results = append(results, w)
+				newAdded++
+			}
+		}
+
+		// If no new works were added in this batch, avoid infinite loop if results are fully exhausted
+		if newAdded == 0 && len(resp.Results) < limit {
+			break
+		}
+	}
+
+	if len(results) > k {
+		results = results[:k]
+	}
+
+	return results, nil
+}
+
 type DownloadProgress struct {
 	Batches map[string]*BatchProgress `json:"batches"`
 }
@@ -631,24 +759,26 @@ func (c *OpenAlexClient) processBatch(
 		default:
 		}
 
-		resp, err := c.FetchPage(ctx, filterStr, cursor)
+		resp, err := c.FetchPageRaw(ctx, filterStr, cursor)
 		if err != nil {
 			aborted = true
 			break
 		}
 
-		if len(resp.Results) == 0 {
+		var pageResp RawPageResponse
+		if err := json.Unmarshal(resp, &pageResp); err != nil {
+			aborted = true
 			break
 		}
 
-		nextCursor := resp.Meta.NextCursor
+		if len(pageResp.Results) == 0 {
+			break
+		}
 
-		for _, paper := range resp.Results {
-			data, err := json.Marshal(paper)
-			if err != nil {
-				continue
-			}
-			if err := writer.WriteLine(data); err != nil {
+		nextCursor := pageResp.Meta.NextCursor
+
+		for _, paper := range pageResp.Results {
+			if err := writer.WriteLine(paper); err != nil {
 				return err
 			}
 			atomic.AddInt64(collectedCount, 1)

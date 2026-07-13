@@ -22,6 +22,8 @@ import {
   Minimize2,
   Plus,
   Trash2,
+  Download,
+  Terminal,
 } from 'lucide-react'
 
 interface ScoredKeyword {
@@ -58,6 +60,7 @@ interface SearchableListEditorProps {
   placeholder: string
   disabled?: boolean
   maxCollapsedItems?: number
+  validate?: (val: string) => { valid: boolean; error?: string; normalized?: string }
 }
 
 function SearchableListEditor({
@@ -68,11 +71,18 @@ function SearchableListEditor({
   placeholder,
   disabled,
   maxCollapsedItems = 10,
+  validate,
 }: SearchableListEditorProps) {
   const [activeTab, setActiveTab] = useState<'list' | 'raw'>('list')
   const [searchQuery, setSearchQuery] = useState('')
   const [newItem, setNewItem] = useState('')
   const [isExpanded, setIsExpanded] = useState(false)
+  const [validationError, setValidationError] = useState<string | null>(null)
+
+  // Clear validation error when user types a new value, toggles tabs, or changes expanded state
+  useEffect(() => {
+    setValidationError(null)
+  }, [newItem, activeTab, isExpanded])
 
   // Parse lines
   const items = useMemo(() => {
@@ -89,15 +99,37 @@ function SearchableListEditor({
     )
   }, [items, searchQuery])
 
-  const handleAddItem = (e: React.FormEvent) => {
-    e.preventDefault()
+  const invalidLines = useMemo(() => {
+    if (!validate) return []
+    return value
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => !validate(line).valid)
+  }, [value, validate])
+
+  const handleAddItem = (e?: React.FormEvent | React.KeyboardEvent) => {
+    if (e) e.preventDefault()
     const cleaned = newItem.trim()
     if (!cleaned) return
-    if (items.includes(cleaned)) {
+
+    let itemToAdd = cleaned
+    if (validate) {
+      const res = validate(cleaned)
+      if (!res.valid) {
+        setValidationError(res.error || 'Invalid format')
+        return
+      }
+      itemToAdd = res.normalized || cleaned
+    }
+
+    setValidationError(null)
+
+    if (items.includes(itemToAdd)) {
       setNewItem('')
       return // Avoid duplicates if already present
     }
-    const newValue = [...items, cleaned].join('\n')
+    const newValue = [...items, itemToAdd].join('\n')
     onChange(newValue)
     setNewItem('')
   }
@@ -111,6 +143,19 @@ function SearchableListEditor({
     if (window.confirm(`Are you sure you want to clear all ${label.toLowerCase()}?`)) {
       onChange('')
     }
+  }
+
+  const handleRawBlur = () => {
+    if (!validate) return
+    const normalizedLines = value
+      .split('\n')
+      .map((line) => {
+        const trimmed = line.trim()
+        if (!trimmed) return ''
+        const res = validate(trimmed)
+        return res.valid ? (res.normalized || trimmed) : line
+      })
+    onChange(normalizedLines.join('\n'))
   }
 
   const EditorContent = (isModal: boolean) => {
@@ -187,7 +232,7 @@ function SearchableListEditor({
                   <button
                     type="button"
                     onClick={() => setSearchQuery('')}
-                    className="absolute inset-y-0 right-0 flex items-center pr-2.5 text-zinc-450 hover:text-zinc-650 dark:hover:text-zinc-200 cursor-pointer"
+                    className="absolute inset-y-0 right-0 flex items-center pr-2.5 text-zinc-455 hover:text-zinc-650 dark:hover:text-zinc-200 cursor-pointer"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -195,22 +240,37 @@ function SearchableListEditor({
               </div>
 
               {/* Quick Add */}
-              <form onSubmit={handleAddItem} className="flex gap-1">
+              <div className="flex gap-1">
                 <input
                   type="text"
                   value={newItem}
                   onChange={(e) => setNewItem(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      handleAddItem(e)
+                    }
+                  }}
                   placeholder="Add item..."
                   className="w-32 px-3 py-1.5 border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 rounded font-mono text-xs focus:outline-none"
                 />
                 <button
-                  type="submit"
+                  type="button"
+                  onClick={(e) => handleAddItem(e)}
                   className="flex items-center justify-center p-1.5 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-850 rounded hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-350 cursor-pointer"
                 >
                   <Plus className="h-3.5 w-3.5" />
                 </button>
-              </form>
+              </div>
             </div>
+
+            {/* Validation Error Message */}
+            {validationError && (
+              <div className="text-[11px] font-mono text-red-500 dark:text-red-400 flex items-center gap-1.5 px-1 py-0.5">
+                <AlertCircle className="h-3.5 w-3.5 animate-pulse" />
+                <span>{validationError}</span>
+              </div>
+            )}
 
             {/* List display */}
             <div
@@ -263,11 +323,23 @@ function SearchableListEditor({
               disabled={disabled}
               value={value}
               onChange={(e) => onChange(e.target.value)}
+              onBlur={handleRawBlur}
               className={`w-full p-3 border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/10 font-mono text-xs leading-relaxed focus:outline-none rounded resize-none flex-1 ${
                 isModal ? 'h-[400px]' : 'h-40'
               }`}
               placeholder={placeholder}
             />
+            {invalidLines.length > 0 && (
+              <div className="mt-2 p-2 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50 rounded flex flex-col gap-1">
+                <span className="text-[11px] font-mono font-bold text-red-650 dark:text-red-400 flex items-center gap-1">
+                  <AlertCircle className="h-3.5 w-3.5" />
+                  Warning: {invalidLines.length} invalid {invalidLines.length === 1 ? 'item' : 'items'} detected
+                </span>
+                <span className="text-[10px] font-mono text-red-500 dark:text-red-400/80 max-h-16 overflow-y-auto">
+                  Invalid values: {invalidLines.join(', ')}
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -331,6 +403,43 @@ function SearchableListEditor({
   )
 }
 
+const validateTopic = (val: string) => {
+  const trimmed = val.trim()
+  if (!trimmed) {
+    return { valid: true, normalized: '' }
+  }
+  const match = trimmed.match(/^([tT])(\d{5})$/)
+  if (!match) {
+    return {
+      valid: false,
+      error: 'Topic ID must be in the format T12345 (T followed by exactly 5 digits)',
+    }
+  }
+  return {
+    valid: true,
+    normalized: `T${match[2]}`,
+  }
+}
+
+const validateDoi = (val: string) => {
+  const trimmed = val.trim()
+  if (!trimmed) {
+    return { valid: true, normalized: '' }
+  }
+  // Relaxed DOI validator: must start with 10. and have a slash separating prefix and suffix
+  const match = trimmed.match(/^10\.\d{4,9}\/.+$/)
+  if (!match) {
+    return {
+      valid: false,
+      error: 'DOI must start with "10." followed by a 4-9 digit prefix and a slash (e.g. 10.1016/...)',
+    }
+  }
+  return {
+    valid: true,
+    normalized: trimmed,
+  }
+}
+
 export function Ingest() {
   const { activeProject } = useProject()
   // API Config States
@@ -359,6 +468,7 @@ export function Ingest() {
   const [uploadSuccess, setUploadSuccess] = useState(false)
   const [uploadedFilename, setUploadedFilename] = useState('')
   const [columns, setColumns] = useState<string[]>([])
+  const [rowCount, setRowCount] = useState<number | null>(null)
   const [selectedTitleCol, setSelectedTitleCol] = useState('')
   const [selectedAbstractCol, setSelectedAbstractCol] = useState('')
   const [selectedDoiCol, setSelectedDoiCol] = useState('')
@@ -385,6 +495,12 @@ export function Ingest() {
   const [anchorsMatched, setAnchorsMatched] = useState<number | null>(null)
   const [anchorsMissing, setAnchorsMissing] = useState<string[]>([])
   const [checkAnchors, setCheckAnchors] = useState(true)
+  const [downloadingSample, setDownloadingSample] = useState(false)
+  const [sampleModalConfig, setSampleModalConfig] = useState<{
+    defaultSize: number
+    onConfirm: (size: number) => void
+  } | null>(null)
+  const [sampleSizeInput, setSampleSizeInput] = useState('')
 
   // OpenAlex Topics States
   interface OpenAlexTopic {
@@ -399,6 +515,121 @@ export function Ingest() {
   const [openalexTopicsTotal, setOpenalexTopicsTotal] = useState<number | null>(null)
   const [openalexTopicsTotalPapers, setOpenalexTopicsTotalPapers] = useState<number | null>(null)
   const [showAllTopics, setShowAllTopics] = useState(false)
+
+  // Pipeline Sync States
+  const [syncing, setSyncing] = useState(false)
+  const [pipelineProgress, setPipelineProgress] = useState(0)
+  const [pipelineLogs, setPipelineLogs] = useState<string[]>([])
+  const consoleBottomRef = useRef<HTMLDivElement | null>(null)
+
+  // 1. Initial Status Check
+  useEffect(() => {
+    const checkInitialStatus = async () => {
+      if (!activeProject) return
+      try {
+        const response = await fetch(`/api/pipeline/status?project=${activeProject}`)
+        if (response.ok) {
+          const data = await response.json()
+          setSyncing(data.syncing)
+          setPipelineProgress(data.progress)
+          setPipelineLogs(data.logs || [])
+        }
+      } catch (err) {
+        console.error('Failed to load initial status:', err)
+      }
+    }
+
+    checkInitialStatus()
+  }, [activeProject])
+
+  // 2. Poll Pipeline Status periodically when Syncing
+  useEffect(() => {
+    let intervalId: ReturnType<typeof setInterval> | null = null
+
+    const checkStatus = async () => {
+      if (!activeProject) return
+      try {
+        const response = await fetch(`/api/pipeline/status?project=${activeProject}`)
+        if (response.ok) {
+          const data = await response.json()
+          setSyncing(data.syncing)
+          setPipelineProgress(data.progress)
+          setPipelineLogs(data.logs || [])
+
+          if (!data.syncing) {
+            if (intervalId) clearInterval(intervalId)
+          }
+        }
+      } catch (err) {
+        console.error('Failed to poll status:', err)
+      }
+    }
+
+    if (syncing) {
+      intervalId = setInterval(checkStatus, 1000)
+    } else {
+      if (intervalId) clearInterval(intervalId)
+    }
+
+    return () => {
+      if (intervalId) clearInterval(intervalId)
+    }
+  }, [syncing, activeProject])
+
+  // Auto-scroll logs to bottom
+  useEffect(() => {
+    if (consoleBottomRef.current) {
+      consoleBottomRef.current.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [pipelineLogs])
+
+  const handleSyncToggle = async () => {
+    if (syncing) {
+      alert('Pipeline execution running in Go background thread. Waiting for completion.')
+      return
+    }
+
+    setSyncing(true)
+    setPipelineProgress(0)
+    setPipelineLogs([
+      '[' + new Date().toLocaleTimeString() + '] [INFO] Requesting pipeline sync from backend...',
+    ])
+
+    try {
+      const response = await fetch(`/api/run-pipeline?project=${activeProject}`, { method: 'POST' })
+      if (!response.ok) {
+        const data = await response.json()
+        alert(data.error || 'Failed to start pipeline')
+        setSyncing(false)
+      }
+    } catch (err: unknown) {
+      alert('Connection failed: ' + (err instanceof Error ? err.message : String(err)))
+      setSyncing(false)
+    }
+  }
+
+  const selectedTopicsList = useMemo(() => {
+    return topics
+      .split('\n')
+      .map((t) => t.trim())
+      .filter(Boolean)
+  }, [topics])
+
+  const isTopicSelected = useCallback((topicId: string) => {
+    return selectedTopicsList.includes(topicId.trim())
+  }, [selectedTopicsList])
+
+  const handleToggleTopic = useCallback((topicId: string, checked: boolean) => {
+    const trimmedId = topicId.trim()
+    let newList: string[]
+    if (checked) {
+      if (selectedTopicsList.includes(trimmedId)) return
+      newList = [...selectedTopicsList, trimmedId]
+    } else {
+      newList = selectedTopicsList.filter((t) => t !== trimmedId)
+    }
+    setTopics(newList.join('\n'))
+  }, [selectedTopicsList])
 
   // Save States
   const [saving, setSaving] = useState(false)
@@ -561,6 +792,7 @@ export function Ingest() {
         const data = await response.json()
         setUploadedFilename(data.filename)
         setColumns(data.columns || [])
+        setRowCount(data.row_count !== undefined ? data.row_count : null)
         setUploadSuccess(true)
 
         // Guess columns
@@ -771,6 +1003,81 @@ export function Ingest() {
     }
   }
 
+  // Download Random Sample CSV Handler
+  const handleDownloadSample = async () => {
+    if (!keywords.trim()) {
+      triggerAlert('info', 'Empty Query', 'Please enter a search keywords query first.')
+      return
+    }
+
+    setSampleSizeInput('385')
+    setSampleModalConfig({
+      defaultSize: 385,
+      onConfirm: async (sampleSize) => {
+        setDownloadingSample(true)
+
+        const keysList = apiKeysStr
+          .split(',')
+          .map((k) => k.trim())
+          .filter(Boolean)
+        const topicsList = topics
+          .split('\n')
+          .map((t) => t.trim())
+          .filter((t) => t && !t.startsWith('#'))
+        const docTypesList = Object.keys(selectedDocTypes).filter((k) => selectedDocTypes[k])
+
+        try {
+          const response = await fetch(`/api/openalex/sample?project=${activeProject}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              query: keywords,
+              keys: keysList,
+              email: apiEmail,
+              date_from: dateFrom,
+              date_to: dateTo,
+              doc_types: docTypesList,
+              topics: topicsList,
+              sample_size: sampleSize,
+            }),
+          })
+
+          if (!response.ok) {
+            const contentType = response.headers.get('content-type')
+            let errMsg = response.statusText
+            if (contentType && contentType.includes('application/json')) {
+              const errData = await response.json()
+              errMsg = errData.error || errMsg
+            }
+            throw new Error(errMsg)
+          }
+
+          const blob = await response.blob()
+          const url = window.URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = `${activeProject || 'openalex'}_sample_${sampleSize}.csv`
+          document.body.appendChild(a)
+          a.click()
+          a.remove()
+          window.URL.revokeObjectURL(url)
+
+          addToast(
+            'success',
+            'Sample Download Completed',
+            `Successfully downloaded CSV sample of ${sampleSize} papers.`,
+          )
+        } catch (err: unknown) {
+          const errMsg = err instanceof Error ? err.message : String(err)
+          triggerAlert('error', 'Download Failed', errMsg)
+          addToast('error', 'Sample Download Failed', errMsg)
+        } finally {
+          setDownloadingSample(false)
+        }
+      }
+    })
+  }
+
   const handleGetOpenAlexTopics = async () => {
     if (!keywords.trim()) {
       triggerAlert('info', 'Empty Query', 'Please enter a search keywords query first.')
@@ -845,11 +1152,107 @@ export function Ingest() {
     }
   }
 
+  const handleDownloadTopicsCSV = () => {
+    if (!openalexTopics || openalexTopics.length === 0) return
+
+    // CSV Headers
+    const headers = ['Topic ID', 'Topic Name', 'Description', 'Paper Count', 'Percentage']
+
+    // Helper to escape values for CSV
+    const escapeCSV = (val: string) => {
+      const escaped = val.replace(/"/g, '""')
+      return `"${escaped}"`
+    }
+
+    // Map rows
+    const rows = openalexTopics.map((t) => [
+      t.topic_id,
+      escapeCSV(t.display_name),
+      escapeCSV(t.description || ''),
+      t.paper_count,
+      `${t.percentage.toFixed(4)}%`
+    ])
+
+    // Construct CSV content
+    const csvContent = [
+      headers.join(','),
+      ...rows.map((row) => row.join(','))
+    ].join('\n')
+
+    // Create a blob and trigger download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.setAttribute('href', url)
+    link.setAttribute('download', `openalex_topics_${activeProject || 'export'}.csv`)
+    link.style.visibility = 'hidden'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
   // Save Config Handler
   const handleSaveConfig = async (e: React.FormEvent) => {
     e.preventDefault()
     setSaving(true)
     setSaveSuccess(false)
+
+    // Validate topics
+    const invalidTopicsList = topics
+      .split('\n')
+      .map((t) => t.trim())
+      .filter(Boolean)
+      .filter((t) => !validateTopic(t).valid)
+
+    if (invalidTopicsList.length > 0) {
+      triggerAlert(
+        'error',
+        'Validation Error',
+        `Cannot save configuration: Target Topics contains invalid entries: ${invalidTopicsList.join(', ')}`
+      )
+      setSaving(false)
+      return
+    }
+
+    // Validate DOIs
+    const invalidAnchorsList = anchors
+      .split('\n')
+      .map((a) => a.trim())
+      .filter(Boolean)
+      .filter((a) => !validateDoi(a).valid)
+
+    if (invalidAnchorsList.length > 0) {
+      triggerAlert(
+        'error',
+        'Validation Error',
+        `Cannot save configuration: Anchor DOIs contains invalid entries: ${invalidAnchorsList.join(', ')}`
+      )
+      setSaving(false)
+      return
+    }
+
+    const normalizedTopics = topics
+      .split('\n')
+      .map((t) => {
+        const trimmed = t.trim()
+        if (!trimmed) return ''
+        const res = validateTopic(trimmed)
+        return res.valid ? (res.normalized || trimmed) : t
+      })
+      .join('\n')
+
+    const normalizedAnchors = anchors
+      .split('\n')
+      .map((a) => {
+        const trimmed = a.trim()
+        if (!trimmed) return ''
+        const res = validateDoi(trimmed)
+        return res.valid ? (res.normalized || trimmed) : a
+      })
+      .join('\n')
+
+    setTopics(normalizedTopics)
+    setAnchors(normalizedAnchors)
 
     const keysList = apiKeysStr
       .split(',')
@@ -879,8 +1282,8 @@ export function Ingest() {
         body: JSON.stringify({
           config: updatedConfig,
           keywords,
-          topics,
-          anchors,
+          topics: normalizedTopics,
+          anchors: normalizedAnchors,
           label: saveLabel,
         }),
       })
@@ -1137,7 +1540,7 @@ export function Ingest() {
                 </div>
                 {uploadSuccess && (
                   <span className="text-[10px] font-mono text-green-600 dark:text-green-400 flex items-center gap-1">
-                    <Check className="h-3 w-3" /> Catalog parsed. {columns.length} columns detected.
+                    <Check className="h-3 w-3" /> Catalog parsed. {rowCount !== null ? `${rowCount.toLocaleString()} rows and ` : ''}{columns.length} columns detected.
                   </span>
                 )}
               </div>
@@ -1407,6 +1810,7 @@ export function Ingest() {
                   onChange={setAnchors}
                   placeholder="10.1016/j.renene..."
                   maxCollapsedItems={8}
+                  validate={validateDoi}
                 />
               </div>
             </div>
@@ -1472,6 +1876,7 @@ export function Ingest() {
                 onChange={setTopics}
                 placeholder="T10020..."
                 maxCollapsedItems={6}
+                validate={validateTopic}
               />
             </div>
 
@@ -1690,19 +2095,35 @@ export function Ingest() {
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleGetOpenAlexCount}
-                  disabled={checkingCount || checkingTopics || !keywords.trim() || queryValid === false}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2 border rounded font-mono text-xs font-bold uppercase bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-800 hover:bg-zinc-800 dark:hover:bg-zinc-200 disabled:opacity-50 cursor-pointer"
-                >
-                  {checkingCount ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Search className="h-3.5 w-3.5" />
-                  )}
-                  Get Search Volume
-                </button>
+                <div className="flex gap-2.5">
+                  <button
+                    type="button"
+                    onClick={handleGetOpenAlexCount}
+                    disabled={checkingCount || checkingTopics || downloadingSample || !keywords.trim() || queryValid === false}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 border rounded font-mono text-xs font-bold uppercase bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-800 hover:bg-zinc-800 dark:hover:bg-zinc-200 disabled:opacity-50 cursor-pointer transition select-none"
+                  >
+                    {checkingCount ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Search className="h-3.5 w-3.5 shrink-0" />
+                    )}
+                    <span>Get Search Volume</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleDownloadSample}
+                    disabled={checkingCount || checkingTopics || downloadingSample || !keywords.trim() || queryValid === false}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 border rounded font-mono text-xs font-bold uppercase bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-200 border-zinc-300 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-850 disabled:opacity-50 cursor-pointer transition select-none"
+                  >
+                    {downloadingSample ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5 shrink-0" />
+                    )}
+                    <span>Get Random Sample</span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -1759,6 +2180,89 @@ export function Ingest() {
               </div>
             </div>
 
+            {/* FULL-WIDTH ROW: Sync Diagnostics Console (cols: 12) */}
+            <div className="lg:col-span-12 flex flex-col gap-4 border border-zinc-200 dark:border-zinc-800 p-5 rounded mt-2 w-full bg-white dark:bg-zinc-950/10">
+              <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-3 flex-wrap gap-3">
+                <div className="flex flex-col gap-1">
+                  <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-50 flex items-center gap-2">
+                    <Terminal className="h-4 w-4 text-zinc-500" />
+                    Ingestion Pipeline & Sync Diagnostics
+                  </h3>
+                  <p className="text-[11px] text-zinc-400 font-sans">
+                    Execute the OpenAlex ingestion pipeline for the active configuration, download publications, and populate the DuckDB database.
+                  </p>
+                </div>
+                <div>
+                  <button
+                    type="button"
+                    onClick={handleSyncToggle}
+                    className={`flex items-center gap-2 px-4 py-2 rounded font-mono text-xs font-bold uppercase border transition-all ${
+                      syncing
+                        ? 'bg-zinc-200 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-zinc-500 hover:bg-zinc-350 dark:hover:bg-zinc-700 cursor-not-allowed'
+                        : 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-800 dark:border-zinc-200 hover:bg-zinc-800 dark:hover:bg-zinc-200 cursor-pointer shadow-sm'
+                    }`}
+                  >
+                    {syncing ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <span>Syncing Pipeline...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play className="h-3.5 w-3.5 fill-current" />
+                        <span>Run OpenAlex Sync</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Console Progress Bar */}
+              {(syncing || pipelineProgress > 0) && (
+                <div className="h-1.5 w-full bg-zinc-150 dark:bg-zinc-900 rounded overflow-hidden">
+                  <div
+                    className="h-full bg-zinc-900 dark:bg-zinc-100 transition-all duration-300 ease-out"
+                    style={{ width: `${Math.min(pipelineProgress, 100)}%` }}
+                  ></div>
+                </div>
+              )}
+
+              {/* Console Terminal Screen */}
+              <div className="bg-zinc-950 text-zinc-300 p-4 h-64 overflow-y-auto font-mono text-[11px] leading-relaxed flex flex-col gap-1 rounded border border-zinc-900 select-text">
+                {pipelineLogs.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-zinc-650 select-none">
+                    <span>Diagnostics Console Idle. Click "Run OpenAlex Sync" to initiate.</span>
+                  </div>
+                ) : (
+                  <>
+                    {pipelineLogs.map((log, index) => (
+                      <div
+                        key={index}
+                        className={
+                          log.includes('[SUCCESS]')
+                            ? 'text-emerald-400'
+                            : log.includes('[ERROR]')
+                              ? 'text-rose-400 animate-pulse'
+                              : log.includes('[INFO]')
+                                ? 'text-zinc-500'
+                                : ''
+                        }
+                      >
+                        {log}
+                      </div>
+                    ))}
+                    {pipelineProgress >= 100 && (
+                      <div className="text-emerald-400 font-bold flex items-center gap-1.5 mt-1">
+                        <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+                        <span>[SUCCESS] Database sync completed successfully. All services ready.</span>
+                      </div>
+                    )}
+                    <div ref={consoleBottomRef}></div>
+                  </>
+                )}
+              </div>
+            </div>
+
             {/* FULL-WIDTH ROW: OpenAlex Topics Distribution Table (cols: 12) */}
             {openalexTopics !== null && (
               <div className="lg:col-span-12 flex flex-col gap-4 border border-zinc-200 dark:border-zinc-800 p-5 rounded mt-2 w-full bg-white dark:bg-zinc-950/10">
@@ -1772,15 +2276,24 @@ export function Ingest() {
                       Showing research topics in matching publications.
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setOpenalexTopics(null)}
-                    className="text-[10px] font-mono uppercase text-zinc-400 hover:text-zinc-650 dark:hover:text-zinc-200 cursor-pointer"
-                  >
-                    Clear Results
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={handleDownloadTopicsCSV}
+                      className="flex items-center gap-1.5 text-[10px] font-mono uppercase text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 cursor-pointer font-bold border border-zinc-200 dark:border-zinc-800 px-2.5 py-1 rounded bg-zinc-50 hover:bg-zinc-100 dark:bg-zinc-900/50 dark:hover:bg-zinc-850 transition-colors"
+                    >
+                      <Download className="h-3 w-3" />
+                      Download CSV
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOpenalexTopics(null)}
+                      className="text-[10px] font-mono uppercase text-zinc-400 hover:text-zinc-650 dark:hover:text-zinc-200 cursor-pointer"
+                    >
+                      Clear Results
+                    </button>
+                  </div>
                 </div>
-
                 {openalexTopics.length === 0 ? (
                   <div className="py-8 text-center text-xs font-mono text-zinc-400 uppercase">
                     No topic distribution data retrieved
@@ -1791,6 +2304,7 @@ export function Ingest() {
                       <table className="w-full text-left border-collapse text-xs font-sans">
                         <thead>
                           <tr className="bg-zinc-50 dark:bg-zinc-900/50 border-b border-zinc-150 dark:border-zinc-800 text-[10px] font-mono uppercase text-zinc-400">
+                            <th className="p-3 w-16 text-center font-bold">Target</th>
                             <th className="p-3 w-28">Topic ID</th>
                             <th className="p-3">Topic Name</th>
                             <th className="p-3">Description</th>
@@ -1801,6 +2315,14 @@ export function Ingest() {
                         <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
                           {openalexTopics.slice(0, showAllTopics ? openalexTopics.length : 10).map((topic) => (
                             <tr key={topic.topic_id} className="hover:bg-zinc-50/55 dark:hover:bg-zinc-900/10">
+                              <td className="p-3 text-center w-16">
+                                <input
+                                  type="checkbox"
+                                  checked={isTopicSelected(topic.topic_id)}
+                                  onChange={(e) => handleToggleTopic(topic.topic_id, e.target.checked)}
+                                  className="rounded border-zinc-300 text-zinc-900 focus:ring-0 cursor-pointer"
+                                />
+                              </td>
                               <td className="p-3 font-mono text-[11px]">
                                 <span className="bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-800 dark:text-zinc-300 font-semibold border border-zinc-200/50 dark:border-zinc-800">
                                   {topic.topic_id}
@@ -1886,6 +2408,76 @@ export function Ingest() {
                 OK
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* Custom Themed Sample Modal */}
+      {sampleModalConfig && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div
+            className="w-full max-w-sm bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded shadow-xl overflow-hidden animate-in zoom-in-95 duration-200"
+            role="dialog"
+            aria-modal="true"
+          >
+            {/* Modal Header */}
+            <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-zinc-400 dark:bg-zinc-650" />
+              <h3 className="text-xs font-bold font-mono uppercase tracking-wider text-zinc-900 dark:text-zinc-100">
+                Get Random Sample
+              </h3>
+            </div>
+
+            {/* Modal Body */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                const size = parseInt(sampleSizeInput.trim(), 10)
+                if (isNaN(size) || size <= 0) {
+                  triggerAlert('error', 'Invalid Sample Size', 'Please enter a valid positive number.')
+                  return
+                }
+                setSampleModalConfig(null)
+                sampleModalConfig.onConfirm(size)
+              }}
+              className="p-5 flex flex-col gap-4"
+            >
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 leading-relaxed font-sans">
+                Specify the number of papers to retrieve as a random sample. The active keywords, date filters, and topics will be applied.
+              </p>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[9px] font-mono font-bold uppercase tracking-wider text-zinc-400">
+                  Sample Size
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  required
+                  value={sampleSizeInput}
+                  onChange={(e) => setSampleSizeInput(e.target.value)}
+                  className="w-full font-mono text-xs px-3 py-2 border border-zinc-200 dark:border-zinc-800 rounded bg-transparent text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-400 focus:border-transparent transition-all"
+                  placeholder="e.g. 385"
+                  autoFocus
+                />
+              </div>
+
+              {/* Modal Footer */}
+              <div className="mt-2 border-t border-zinc-100 dark:border-zinc-850 pt-4 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setSampleModalConfig(null)}
+                  className="px-4 py-1.5 border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 text-zinc-700 dark:text-zinc-300 rounded text-[10px] font-mono font-bold uppercase tracking-wider cursor-pointer transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 bg-zinc-900 dark:bg-zinc-100 hover:bg-zinc-800 dark:hover:bg-zinc-200 text-white dark:text-zinc-950 rounded text-[10px] font-mono font-bold uppercase tracking-wider cursor-pointer shadow transition"
+                >
+                  Download CSV
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

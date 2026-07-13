@@ -1,7 +1,7 @@
 // src/routes/__root.tsx
 import { useState, useEffect } from 'react'
 import { Link, Outlet } from '@tanstack/react-router'
-import { LayoutDashboard, Settings, Database, BookOpen, Sun, Moon } from 'lucide-react'
+import { LayoutDashboard, Settings, Database, BookOpen, Sun, Moon, Cpu } from 'lucide-react'
 import { ProjectContext } from '../context/ProjectContext'
 
 export function Root() {
@@ -194,6 +194,22 @@ export function Root() {
             >
               <Database className="h-4 w-4" />
               <span>SQL Playground</span>
+            </Link>
+
+            <Link
+              to="/wos"
+              activeProps={{
+                className:
+                  'bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 font-semibold',
+              }}
+              inactiveProps={{
+                className:
+                  'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900/60',
+              }}
+              className="flex items-center gap-3 px-3 py-2.5 rounded text-xs font-mono uppercase tracking-wider transition-all"
+            >
+              <Cpu className="h-4 w-4" />
+              <span>WoS & Imputation</span>
             </Link>
 
             <Link
