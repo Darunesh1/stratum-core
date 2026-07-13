@@ -60,6 +60,7 @@ type APIServer struct {
 	server           *http.Server
 	mcpServer        *mcp.Server
 	mcpHandler       *mcp.SSEHandler
+	currentProject   string
 	mu               sync.Mutex
 }
 
@@ -72,6 +73,7 @@ func NewAPIServer(addr string, dbPath string) *APIServer {
 		configDBs:        make(map[string]*sql.DB),
 		pipelineStatuses: make(map[string]*PipelineStatus),
 		projectMutexes:   make(map[string]*sync.Mutex),
+		currentProject:   "default",
 	}
 
 	s.mcpServer = mcp.NewServer(&mcp.Implementation{
