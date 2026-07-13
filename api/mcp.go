@@ -27,7 +27,7 @@ import (
 
 // MCP Types mapped from standalone server
 type ValidateArgs struct {
-	ConfigPath string `json:"config_path,omitempty" jsonschema:"Optional path to the config file or config.db"`
+	Project string `json:"project,omitempty" jsonschema:"Optional project name. Defaults to active project"`
 }
 
 type ValidateResult struct {
@@ -36,7 +36,7 @@ type ValidateResult struct {
 }
 
 type SearchArgs struct {
-	ConfigPath   string `json:"config_path,omitempty" jsonschema:"Optional path to the config file or config.db"`
+	Project      string `json:"project,omitempty" jsonschema:"Optional project name. Defaults to active project"`
 	CheckAnchors bool   `json:"check_anchors,omitempty" jsonschema:"Optional flag to check anchor DOI coverage"`
 }
 
@@ -49,7 +49,7 @@ type SearchResult struct {
 }
 
 type DownloadArgs struct {
-	ConfigPath  string `json:"config_path,omitempty" jsonschema:"Optional path to the config file or config.db"`
+	Project     string `json:"project,omitempty" jsonschema:"Optional project name. Defaults to active project"`
 	OutputJSONL string `json:"output_jsonl,omitempty" jsonschema:"Optional path to write downloaded JSONL"`
 }
 
@@ -59,8 +59,8 @@ type DownloadResult struct {
 }
 
 type ConvertDBArgs struct {
-	ConfigPath string `json:"config_path,omitempty" jsonschema:"Optional path to the config file or config.db"`
-	JSONLPath  string `json:"jsonl_path,omitempty" jsonschema:"Optional path to input JSONL"`
+	Project   string `json:"project,omitempty" jsonschema:"Optional project name. Defaults to active project"`
+	JSONLPath string `json:"jsonl_path,omitempty" jsonschema:"Optional path to input JSONL"`
 }
 
 type ConvertDBResult struct {
@@ -72,9 +72,9 @@ type ConvertDBResult struct {
 }
 
 type ImputeArgs struct {
-	ConfigPath string `json:"config_path,omitempty" jsonschema:"Optional path to the config file or config.db"`
-	Pipeline   string `json:"pipeline,omitempty" jsonschema:"Pipeline stage to execute: crossref, llm, pdf, or all"`
-	Limit      int    `json:"limit,omitempty" jsonschema:"Limit for PDF extraction"`
+	Project  string `json:"project,omitempty" jsonschema:"Optional project name. Defaults to active project"`
+	Pipeline string `json:"pipeline,omitempty" jsonschema:"Pipeline stage to execute: crossref, llm, pdf, or all"`
+	Limit    int    `json:"limit,omitempty" jsonschema:"Limit for PDF extraction"`
 }
 
 type ImputeResult struct {
@@ -83,8 +83,8 @@ type ImputeResult struct {
 }
 
 type GetTopicsArgs struct {
-	ConfigPath string `json:"config_path,omitempty" jsonschema:"Optional path to the config file or config.db"`
-	Details    bool   `json:"details,omitempty"`
+	Project string `json:"project,omitempty" jsonschema:"Optional project name. Defaults to active project"`
+	Details bool   `json:"details,omitempty"`
 }
 
 type GetTopicsResult struct {
@@ -357,7 +357,10 @@ func (s *APIServer) RegisterMCPTools() error {
 }
 
 func (s *APIServer) handleValidate(ctx context.Context, req *mcp.CallToolRequest, args ValidateArgs) (*mcp.CallToolResult, ValidateResult, error) {
-	project := s.resolveProjectFromConfigPath(args.ConfigPath)
+	project := args.Project
+	if project == "" {
+		project = s.currentProject
+	}
 	configDBPath, _, _, _, _ := s.getProjectPaths(project)
 
 	cfg, err := config.LoadConfig(configDBPath)
@@ -414,7 +417,10 @@ func (s *APIServer) handleValidate(ctx context.Context, req *mcp.CallToolRequest
 }
 
 func (s *APIServer) handleSearch(ctx context.Context, req *mcp.CallToolRequest, args SearchArgs) (*mcp.CallToolResult, SearchResult, error) {
-	project := s.resolveProjectFromConfigPath(args.ConfigPath)
+	project := args.Project
+	if project == "" {
+		project = s.currentProject
+	}
 	configDBPath, _, _, _, _ := s.getProjectPaths(project)
 
 	cfg, err := config.LoadConfig(configDBPath)
@@ -538,7 +544,10 @@ func (s *APIServer) handleSearch(ctx context.Context, req *mcp.CallToolRequest, 
 }
 
 func (s *APIServer) handleDownload(ctx context.Context, req *mcp.CallToolRequest, args DownloadArgs) (*mcp.CallToolResult, DownloadResult, error) {
-	project := s.resolveProjectFromConfigPath(args.ConfigPath)
+	project := args.Project
+	if project == "" {
+		project = s.currentProject
+	}
 	configDBPath, _, jsonlDir, _, _ := s.getProjectPaths(project)
 
 	cfg, err := config.LoadConfig(configDBPath)
@@ -621,7 +630,10 @@ func (s *APIServer) handleDownload(ctx context.Context, req *mcp.CallToolRequest
 }
 
 func (s *APIServer) handleConvertDB(ctx context.Context, req *mcp.CallToolRequest, args ConvertDBArgs) (*mcp.CallToolResult, ConvertDBResult, error) {
-	project := s.resolveProjectFromConfigPath(args.ConfigPath)
+	project := args.Project
+	if project == "" {
+		project = s.currentProject
+	}
 	_, papersDBPath, jsonlDir, _, _ := s.getProjectPaths(project)
 
 	jsonlPath := args.JSONLPath
@@ -712,7 +724,10 @@ func (s *APIServer) handleConvertDB(ctx context.Context, req *mcp.CallToolReques
 }
 
 func (s *APIServer) handleImpute(ctx context.Context, req *mcp.CallToolRequest, args ImputeArgs) (*mcp.CallToolResult, ImputeResult, error) {
-	project := s.resolveProjectFromConfigPath(args.ConfigPath)
+	project := args.Project
+	if project == "" {
+		project = s.currentProject
+	}
 	configDBPath, papersDBPath, _, _, _ := s.getProjectPaths(project)
 
 	cfg, err := config.LoadConfig(configDBPath)
@@ -814,7 +829,10 @@ func (s *APIServer) handleImpute(ctx context.Context, req *mcp.CallToolRequest, 
 }
 
 func (s *APIServer) handleGetTopics(ctx context.Context, req *mcp.CallToolRequest, args GetTopicsArgs) (*mcp.CallToolResult, GetTopicsResult, error) {
-	project := s.resolveProjectFromConfigPath(args.ConfigPath)
+	project := args.Project
+	if project == "" {
+		project = s.currentProject
+	}
 	configDBPath, _, _, _, _ := s.getProjectPaths(project)
 
 	cfg, err := config.LoadConfig(configDBPath)
