@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -172,6 +173,20 @@ func (s *APIServer) Start() error {
 	go func() {
 		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("[FATAL] HTTP server ListenAndServe failed: %v", err)
+			os.Exit(1)
+		}
+	}()
+	return nil
+}
+
+// StartWithListener starts the HTTP server asynchronously on a pre-bound listener.
+func (s *APIServer) StartWithListener(listener net.Listener) error {
+	if s.server == nil {
+		return fmt.Errorf("server not registered, call RegisterRoutes first")
+	}
+	go func() {
+		if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
+			log.Printf("[FATAL] HTTP server Serve failed: %v", err)
 			os.Exit(1)
 		}
 	}()
