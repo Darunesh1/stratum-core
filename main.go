@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"context"
+	"net"
 	"stratum/api"
 )
 
@@ -29,14 +30,26 @@ func main() {
 		return
 	}
 
-	fmt.Printf("Starting Stratum Web Server on http://localhost:%d...\n", *port)
-	fmt.Printf("Integrated MCP SSE Server listening at http://localhost:%d/api/mcp\n", *port)
 	addr := fmt.Sprintf(":%d", *port)
-	srv := api.NewAPIServer(addr, *dbPath)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Port %d is already in use (address already in use).\n\n", *port)
+		fmt.Fprintln(os.Stderr, "To resolve this, you can:")
+		fmt.Fprintf(os.Stderr, "  1. Run on a specific free port:              ./stratum -port <available-port>\n")
+		fmt.Fprintf(os.Stderr, "  2. Let the OS assign any free port automatically:  ./stratum -port 0\n")
+		os.Exit(1)
+	}
+
+	actualPort := listener.Addr().(*net.TCPAddr).Port
+
+	fmt.Printf("Starting Stratum Web Server on http://localhost:%d...\n", actualPort)
+	fmt.Printf("Integrated MCP SSE Server listening at http://localhost:%d/api/mcp\n", actualPort)
+
+	srv := api.NewAPIServer(fmt.Sprintf(":%d", actualPort), *dbPath)
 	if err := srv.RegisterRoutes(); err != nil {
 		log.Fatalf("Failed to register routes: %v", err)
 	}
-	if err := srv.Start(); err != nil {
+	if err := srv.StartWithListener(listener); err != nil {
 		log.Fatalf("HTTP server failed: %v", err)
 	}
 
