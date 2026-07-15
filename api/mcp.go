@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -88,7 +89,8 @@ type GetTopicsArgs struct {
 }
 
 type GetTopicsResult struct {
-	Markdown string `json:"markdown"`
+	CSVPath string `json:"csv_path"`
+	Message string `json:"message"`
 }
 
 // Project Management structures
@@ -197,13 +199,14 @@ type ValidateAnchorsResult struct {
 
 // Search & sample structures
 type GetSampleArgs struct {
-	Size    int    `json:"size,omitempty" jsonschema:"Number of records to fetch. Default 20, max 200"`
+	Size    int    `json:"size,omitempty" jsonschema:"Number of records to fetch. Default 20, max 385"`
 	Project string `json:"project,omitempty" jsonschema:"Optional project name"`
 }
 
 type GetSampleResult struct {
-	TotalMatches int             `json:"total_matches"`
-	Samples      []openalex.Work `json:"samples"`
+	TotalMatches int    `json:"total_matches"`
+	CSVPath      string `json:"csv_path"`
+	Message      string `json:"message"`
 }
 
 // Exploration structures
@@ -841,7 +844,7 @@ func (s *APIServer) handleGetTopics(ctx context.Context, req *mcp.CallToolReques
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: errStr}},
 			IsError: true,
-		}, GetTopicsResult{Markdown: ""}, nil
+		}, GetTopicsResult{Message: errStr}, nil
 	}
 
 	keywords := cfg.Keywords
@@ -850,7 +853,7 @@ func (s *APIServer) handleGetTopics(ctx context.Context, req *mcp.CallToolReques
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: errStr}},
 			IsError: true,
-		}, GetTopicsResult{Markdown: ""}, nil
+		}, GetTopicsResult{Message: errStr}, nil
 	}
 	topics := cfg.Topics
 
@@ -884,7 +887,7 @@ func (s *APIServer) handleGetTopics(ctx context.Context, req *mcp.CallToolReques
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: errStr}},
 				IsError: true,
-			}, GetTopicsResult{Markdown: ""}, nil
+			}, GetTopicsResult{Message: errStr}, nil
 		}
 		if resp == nil || len(resp.GroupBy) == 0 {
 			break
@@ -899,7 +902,7 @@ func (s *APIServer) handleGetTopics(ctx context.Context, req *mcp.CallToolReques
 	if len(allGroups) == 0 {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: "No topics found matching the current keyword configurations."}},
-		}, GetTopicsResult{Markdown: "No topics found."}, nil
+		}, GetTopicsResult{Message: "No topics found matching configuration."}, nil
 	}
 
 	sort.Slice(allGroups, func(i, j int) bool {
@@ -959,27 +962,43 @@ func (s *APIServer) handleGetTopics(ctx context.Context, req *mcp.CallToolReques
 	}
 	wg.Wait()
 
-	var md strings.Builder
-	md.WriteString(fmt.Sprintf("## Topics found in search results (%d topics, %d papers total)\n\n", len(enriched), totalPapers))
-	md.WriteString("| Topic ID | Topic Name | Description | Paper Count | Percentage |\n")
-	md.WriteString("| :--- | :--- | :--- | :---: | :---: |\n")
+	// Write enriched topics to CSV
+	_, _, _, dbDir, _ := s.getProjectPaths(project)
+	csvFilename := fmt.Sprintf("%s_topics.csv", project)
+	csvPath := filepath.Join(dbDir, csvFilename)
 
-	for _, t := range enriched {
-		desc := t.Description
-		if len(desc) > 80 {
-			desc = desc[:77] + "..."
-		}
-		if desc == "" {
-			desc = "—"
-		}
-		md.WriteString(fmt.Sprintf("| `%s` | %s | %s | %d | %.2f%% |\n", t.TopicID, t.DisplayName, desc, t.Count, t.Percentage))
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		return nil, GetTopicsResult{}, fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	markdownStr := md.String()
+	csvFile, err := os.Create(csvPath)
+	if err != nil {
+		return nil, GetTopicsResult{}, fmt.Errorf("failed to create topics CSV file: %w", err)
+	}
+	defer csvFile.Close()
+
+	writer := csv.NewWriter(csvFile)
+	defer writer.Flush()
+
+	writer.Write([]string{"topic_id", "topic_name", "description", "paper_count", "percentage"})
+	for _, t := range enriched {
+		writer.Write([]string{
+			t.TopicID,
+			t.DisplayName,
+			t.Description,
+			fmt.Sprintf("%d", t.Count),
+			fmt.Sprintf("%.2f%%", t.Percentage),
+		})
+	}
+
+	msg := fmt.Sprintf("Topics successfully saved to CSV: %s (%d topics found, %d papers total)", csvPath, len(enriched), totalPapers)
 
 	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: markdownStr}},
-	}, GetTopicsResult{Markdown: markdownStr}, nil
+		Content: []mcp.Content{&mcp.TextContent{Text: msg}},
+	}, GetTopicsResult{
+		CSVPath: csvPath,
+		Message: msg,
+	}, nil
 }
 
 // RegisterMCPResources registers all static and dynamic resources.
@@ -1712,7 +1731,7 @@ func (s *APIServer) handleGetSampleMCP(ctx context.Context, req *mcp.CallToolReq
 		project = s.currentProject
 	}
 
-	configDBPath, _, _, _, _ := s.getProjectPaths(project)
+	configDBPath, _, _, dbDir, _ := s.getProjectPaths(project)
 	cfg, err := config.LoadConfig(configDBPath)
 	if err != nil {
 		return nil, GetSampleResult{}, fmt.Errorf("failed to load config: %w", err)
@@ -1722,8 +1741,8 @@ func (s *APIServer) handleGetSampleMCP(ctx context.Context, req *mcp.CallToolReq
 	if size <= 0 {
 		size = 20
 	}
-	if size > 200 {
-		size = 200
+	if size > 385 {
+		size = 385
 	}
 
 	client := openalex.NewClient(cfg.API.Keys, cfg.API.Email, 200, 5, 3, 1)
@@ -1749,9 +1768,51 @@ func (s *APIServer) handleGetSampleMCP(ctx context.Context, req *mcp.CallToolReq
 		return nil, GetSampleResult{}, fmt.Errorf("failed to fetch sample from OpenAlex: %w", err)
 	}
 
-	return &mcp.CallToolResult{}, GetSampleResult{
+	csvFilename := fmt.Sprintf("%s_sample.csv", project)
+	csvPath := filepath.Join(dbDir, csvFilename)
+
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		return nil, GetSampleResult{}, fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	csvFile, err := os.Create(csvPath)
+	if err != nil {
+		return nil, GetSampleResult{}, fmt.Errorf("failed to create CSV file: %w", err)
+	}
+	defer csvFile.Close()
+
+	writer := csv.NewWriter(csvFile)
+	defer writer.Flush()
+
+	writer.Write([]string{"id", "doi", "title", "publication_year", "type", "source_venue", "fwci", "cited_by_count", "primary_topic"})
+	for _, w := range samples {
+		var venueName string
+		if w.PrimaryLocation.Source.DisplayName != "" {
+			venueName = w.PrimaryLocation.Source.DisplayName
+		} else {
+			venueName = "—"
+		}
+		writer.Write([]string{
+			w.ID,
+			w.DOI,
+			w.Title,
+			fmt.Sprintf("%d", w.PublicationYear),
+			w.Type,
+			venueName,
+			fmt.Sprintf("%.4f", w.FWCI),
+			fmt.Sprintf("%d", w.CitedByCount),
+			w.PrimaryTopic.DisplayName,
+		})
+	}
+
+	msg := fmt.Sprintf("Sample of %d papers successfully saved to CSV: %s", len(samples), csvPath)
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: msg}},
+	}, GetSampleResult{
 		TotalMatches: count,
-		Samples:      samples,
+		CSVPath:      csvPath,
+		Message:      msg,
 	}, nil
 }
 

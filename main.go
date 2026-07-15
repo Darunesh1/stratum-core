@@ -17,12 +17,13 @@ import (
 func main() {
 	port := flag.Int("port", 8080, "Port to run the HTTP server on")
 	dbPath := flag.String("db", "data/db/papers.db", "Path to the DuckDB database file")
+	workspace := flag.String("workspace", "", "Path to the local workspace root directory where projects are stored")
 	flag.Parse()
 
 	args := flag.Args()
 	if len(args) > 0 && args[0] == "mcp" {
 		fmt.Fprintln(os.Stderr, "Starting Stratum MCP Server (stdio mode)...")
-		srv := api.NewAPIServer("", *dbPath)
+		srv := api.NewAPIServer("", *dbPath, *workspace)
 		ctx := context.Background()
 		if err := srv.RunMCPStdio(ctx); err != nil {
 			log.Fatalf("MCP server failed: %v", err)
@@ -45,7 +46,7 @@ func main() {
 	fmt.Printf("Starting Stratum Web Server on http://localhost:%d...\n", actualPort)
 	fmt.Printf("Integrated MCP SSE Server listening at http://localhost:%d/api/mcp\n", actualPort)
 
-	srv := api.NewAPIServer(fmt.Sprintf(":%d", actualPort), *dbPath)
+	srv := api.NewAPIServer(fmt.Sprintf(":%d", actualPort), *dbPath, *workspace)
 	if err := srv.RegisterRoutes(); err != nil {
 		log.Fatalf("Failed to register routes: %v", err)
 	}
