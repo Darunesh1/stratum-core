@@ -54,6 +54,7 @@ type PipelineStatus struct {
 type APIServer struct {
 	addr             string
 	dbPath           string
+	workspaceDir     string
 	dbManagers       map[string]*db.DBManager
 	configDBs        map[string]*sql.DB
 	pipelineStatuses map[string]*PipelineStatus
@@ -66,10 +67,11 @@ type APIServer struct {
 }
 
 // NewAPIServer creates a new API server on the specified address.
-func NewAPIServer(addr string, dbPath string) *APIServer {
+func NewAPIServer(addr string, dbPath string, workspaceDir string) *APIServer {
 	s := &APIServer{
 		addr:             addr,
 		dbPath:           dbPath,
+		workspaceDir:     workspaceDir,
 		dbManagers:       make(map[string]*db.DBManager),
 		configDBs:        make(map[string]*sql.DB),
 		pipelineStatuses: make(map[string]*PipelineStatus),
@@ -235,17 +237,34 @@ func sanitizeProjectName(name string) string {
 }
 
 func (s *APIServer) getProjectPaths(project string) (configDBPath, papersDBPath, jsonlDir, dbDir, uploadsDir string) {
+	baseDir := s.workspaceDir
+	if baseDir == "" {
+		baseDir = "."
+	}
+
 	if project == "" || project == "default" {
-		configDBPath = filepath.Join(filepath.Dir(s.dbPath), "config.db")
-		papersDBPath = s.dbPath
-		jsonlDir = "data/jsonl"
-		dbDir = "data"
-		uploadsDir = "data/uploads"
+		if s.workspaceDir != "" {
+			configDBPath = filepath.Join(baseDir, "data", "config.db")
+			if filepath.IsAbs(s.dbPath) {
+				papersDBPath = s.dbPath
+			} else {
+				papersDBPath = filepath.Join(baseDir, "data", "papers.db")
+			}
+			jsonlDir = filepath.Join(baseDir, "data", "jsonl")
+			dbDir = filepath.Join(baseDir, "data")
+			uploadsDir = filepath.Join(baseDir, "data", "uploads")
+		} else {
+			configDBPath = filepath.Join(filepath.Dir(s.dbPath), "config.db")
+			papersDBPath = s.dbPath
+			jsonlDir = "data/jsonl"
+			dbDir = "data"
+			uploadsDir = "data/uploads"
+		}
 		return
 	}
 
 	project = sanitizeProjectName(project)
-	projDir := filepath.Join("projects", project)
+	projDir := filepath.Join(baseDir, "projects", project)
 	configDBPath = filepath.Join(projDir, "data", "config.db")
 	papersDBPath = filepath.Join(projDir, "data", fmt.Sprintf("%s.db", project))
 	jsonlDir = filepath.Join(projDir, "data", "jsonl")
@@ -400,14 +419,19 @@ func (s *APIServer) getConfigDB(project string) (*sql.DB, error) {
 }
 
 func (s *APIServer) ensureProjectDirs(project string) error {
+	baseDir := s.workspaceDir
+	if baseDir == "" {
+		baseDir = "."
+	}
+
 	if project == "" || project == "default" {
-		_ = os.MkdirAll("data/jsonl", 0755)
-		_ = os.MkdirAll("data/uploads", 0755)
+		_ = os.MkdirAll(filepath.Join(baseDir, "data", "jsonl"), 0755)
+		_ = os.MkdirAll(filepath.Join(baseDir, "data", "uploads"), 0755)
 		return nil
 	}
 
 	project = sanitizeProjectName(project)
-	projDir := filepath.Join("projects", project)
+	projDir := filepath.Join(baseDir, "projects", project)
 	if err := os.MkdirAll(filepath.Join(projDir, "data", "jsonl"), 0755); err != nil {
 		return err
 	}
