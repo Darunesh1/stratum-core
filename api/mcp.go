@@ -18,6 +18,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"stratum/config"
+	"stratum/db"
 	"stratum/docs"
 	"stratum/impute"
 	"stratum/openalex"
@@ -91,6 +92,21 @@ type GetTopicsArgs struct {
 type GetTopicsResult struct {
 	CSVPath string `json:"csv_path"`
 	Message string `json:"message"`
+}
+
+type GetWorkspaceArgs struct{}
+
+type GetWorkspaceResult struct {
+	WorkspaceDir string `json:"workspace_dir"`
+}
+
+type SetWorkspaceArgs struct {
+	WorkspaceDir string `json:"workspace_dir" jsonschema:"Path to the new local workspace root directory"`
+}
+
+type SetWorkspaceResult struct {
+	Status       string `json:"status"`
+	WorkspaceDir string `json:"workspace_dir"`
 }
 
 // Project Management structures
@@ -355,6 +371,16 @@ func (s *APIServer) RegisterMCPTools() error {
 		Name:        "sync_wos",
 		Description: "Ingest a Web of Science CSV or Excel export file, download missing papers from OpenAlex, and calculate overlap metrics.",
 	}, s.handleSyncWoSMCP)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "get_workspace",
+		Description: "Get the path to the current local workspace root directory.",
+	}, s.handleGetWorkspaceMCP)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "set_workspace",
+		Description: "Set/change the active local workspace root directory. Existing database connections and caches will be safely re-routed.",
+	}, s.handleSetWorkspaceMCP)
 
 	return nil
 }
@@ -1342,6 +1368,44 @@ func (s *APIServer) handleReadStateHistory() mcp.ResourceHandler {
 	}
 }
 
+func (s *APIServer) handleGetWorkspaceMCP(ctx context.Context, req *mcp.CallToolRequest, args GetWorkspaceArgs) (*mcp.CallToolResult, GetWorkspaceResult, error) {
+	return &mcp.CallToolResult{}, GetWorkspaceResult{WorkspaceDir: s.workspaceDir}, nil
+}
+
+func (s *APIServer) handleSetWorkspaceMCP(ctx context.Context, req *mcp.CallToolRequest, args SetWorkspaceArgs) (*mcp.CallToolResult, SetWorkspaceResult, error) {
+	newWorkspace := strings.TrimSpace(args.WorkspaceDir)
+	if newWorkspace != "" {
+		absPath, err := filepath.Abs(newWorkspace)
+		if err == nil {
+			newWorkspace = absPath
+		}
+		if err := os.MkdirAll(newWorkspace, 0755); err != nil {
+			return nil, SetWorkspaceResult{}, fmt.Errorf("failed to create workspace directory: %w", err)
+		}
+	}
+
+	s.mu.Lock()
+	for _, dbConn := range s.configDBs {
+		dbConn.Close()
+	}
+	for _, mgr := range s.dbManagers {
+		mgr.Close()
+	}
+	s.configDBs = make(map[string]*sql.DB)
+	s.dbManagers = make(map[string]*db.DBManager)
+	s.workspaceDir = newWorkspace
+	s.currentProject = "default"
+	s.mu.Unlock()
+
+	msg := fmt.Sprintf("Workspace successfully switched to: %s", s.workspaceDir)
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: msg}},
+	}, SetWorkspaceResult{
+		Status:       "success",
+		WorkspaceDir: s.workspaceDir,
+	}, nil
+}
+
 // Project Management handlers
 func (s *APIServer) handleCreateProjectMCP(ctx context.Context, req *mcp.CallToolRequest, args CreateProjectArgs) (*mcp.CallToolResult, CreateProjectResult, error) {
 	name := sanitizeProjectName(args.Name)
@@ -1377,7 +1441,12 @@ func (s *APIServer) handleCreateProjectMCP(ctx context.Context, req *mcp.CallToo
 func (s *APIServer) handleListProjectsMCP(ctx context.Context, req *mcp.CallToolRequest, args ListProjectsArgs) (*mcp.CallToolResult, ListProjectsResult, error) {
 	projects := []string{"default"}
 
-	if entries, err := os.ReadDir("projects"); err == nil {
+	baseDir := s.workspaceDir
+	if baseDir == "" {
+		baseDir = "."
+	}
+	projectsDir := filepath.Join(baseDir, "projects")
+	if entries, err := os.ReadDir(projectsDir); err == nil {
 		for _, entry := range entries {
 			if entry.IsDir() {
 				name := entry.Name()

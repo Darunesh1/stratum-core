@@ -24,6 +24,9 @@ export function Root() {
     return 'default'
   })
   const [projects, setProjects] = useState<string[]>(['default'])
+  const [workspaceDir, setWorkspaceDir] = useState('')
+  const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState(false)
+  const [workspaceInput, setWorkspaceInput] = useState('')
 
   // Modal State Hooks
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -43,9 +46,21 @@ export function Root() {
     }
   }
 
+  const fetchWorkspace = async () => {
+    try {
+      const response = await fetch('/api/workspace')
+      if (response.ok) {
+        const data = await response.json()
+        setWorkspaceDir(data.workspace_dir || '')
+      }
+    } catch (err) {
+      console.error('Failed to load workspace:', err)
+    }
+  }
+
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchProjects()
+    fetchWorkspace()
   }, [])
 
   useEffect(() => {
@@ -92,6 +107,39 @@ export function Root() {
     }
   }
 
+  const handleWorkspaceChangeClick = () => {
+    setWorkspaceInput(workspaceDir)
+    setModalError(null)
+    setIsWorkspaceModalOpen(true)
+  }
+
+  const submitSetWorkspace = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    setIsSaving(true)
+    setModalError(null)
+    try {
+      const response = await fetch('/api/workspace', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace_dir: workspaceInput.trim() }),
+      })
+      if (response.ok) {
+        const data = await response.json()
+        setWorkspaceDir(data.workspace_dir || '')
+        setIsWorkspaceModalOpen(false)
+        await fetchProjects()
+        setActiveProject('default')
+      } else {
+        const errData = await response.json()
+        setModalError(errData.error || response.statusText || 'Failed to update workspace.')
+      }
+    } catch (err) {
+      setModalError('Connection error: ' + String(err))
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
   useEffect(() => {
     if (darkMode) {
       document.documentElement.classList.add('dark')
@@ -116,6 +164,25 @@ export function Root() {
               <span className="text-[10px] font-mono text-zinc-500 font-semibold uppercase tracking-wider">
                 v0.1
               </span>
+            </div>
+          </div>
+
+          {/* Workspace Area */}
+          <div className="flex flex-col gap-2 p-4 border-b border-zinc-200 dark:border-zinc-850 bg-zinc-100/30 dark:bg-zinc-900/10">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-zinc-400">
+                Workspace
+              </span>
+              <button
+                type="button"
+                onClick={handleWorkspaceChangeClick}
+                className="text-[9px] font-mono font-bold uppercase text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 cursor-pointer"
+              >
+                Change
+              </button>
+            </div>
+            <div className="text-[11px] font-mono truncate text-zinc-650 dark:text-zinc-400" title={workspaceDir || 'Default'}>
+              {workspaceDir || './'}
             </div>
           </div>
 
@@ -329,6 +396,77 @@ export function Root() {
                   className="px-3 py-1.5 bg-zinc-900 dark:bg-zinc-100 hover:bg-zinc-805 dark:hover:bg-zinc-200 text-white dark:text-zinc-950 rounded text-[10px] font-mono font-bold uppercase tracking-wider shadow cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition"
                 >
                   {isSaving ? 'Creating...' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* Change Workspace Modal */}
+      {isWorkspaceModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div
+            className="w-full max-w-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg shadow-xl overflow-hidden animate-in zoom-in-95 duration-200"
+            role="dialog"
+            aria-modal="true"
+          >
+            {/* Modal Header */}
+            <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
+              <h3 className="text-xs font-bold font-mono uppercase tracking-wider text-zinc-900 dark:text-zinc-100">
+                Change Workspace
+              </h3>
+            </div>
+
+            <form onSubmit={submitSetWorkspace}>
+              {/* Modal Body */}
+              <div className="p-5 flex flex-col gap-4">
+                <div className="flex flex-col gap-2">
+                  <label
+                    htmlFor="workspace-path-input"
+                    className="text-[10px] font-mono font-bold uppercase tracking-wider text-zinc-400"
+                  >
+                    Workspace Path
+                  </label>
+                  <input
+                    id="workspace-path-input"
+                    type="text"
+                    value={workspaceInput}
+                    onChange={(e) => {
+                      setWorkspaceInput(e.target.value)
+                      if (modalError) setModalError(null)
+                    }}
+                    placeholder="e.g. /Users/username/stratum-workspace"
+                    autoFocus
+                    className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 px-3 py-2 rounded font-mono text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-zinc-400 dark:focus:border-zinc-700"
+                  />
+                  <span className="text-[9px] font-mono text-zinc-400 leading-normal">
+                    Enter the absolute folder path where projects and data will be stored.
+                  </span>
+                </div>
+
+                {modalError && (
+                  <div className="p-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50 rounded text-red-600 dark:text-red-400 font-mono text-[10px] leading-relaxed">
+                    {modalError}
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="px-5 py-3 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsWorkspaceModalOpen(false)}
+                  disabled={isSaving}
+                  className="px-3 py-1.5 border border-zinc-200 dark:border-zinc-800 rounded text-[10px] font-mono font-bold uppercase text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 bg-white dark:bg-zinc-900 cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className="px-3 py-1.5 bg-zinc-900 dark:bg-zinc-100 hover:bg-zinc-805 dark:hover:bg-zinc-200 text-white dark:text-zinc-950 rounded text-[10px] font-mono font-bold uppercase tracking-wider shadow cursor-pointer disabled:opacity-50 transition"
+                >
+                  {isSaving ? 'Updating...' : 'Update'}
                 </button>
               </div>
             </form>
