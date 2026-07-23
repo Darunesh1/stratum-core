@@ -603,57 +603,14 @@ func (s *APIServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleWorkspace(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if r.Method == http.MethodGet {
-		json.NewEncoder(w).Encode(map[string]string{
-			"workspace_dir": s.workspaceDir,
-		})
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error": "Method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
 
-	if r.Method == http.MethodPost {
-		var req struct {
-			WorkspaceDir string `json:"workspace_dir"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte(`{"error": "invalid request body"}`))
-			return
-		}
-
-		newWorkspace := strings.TrimSpace(req.WorkspaceDir)
-		if newWorkspace != "" {
-			absPath, err := filepath.Abs(newWorkspace)
-			if err == nil {
-				newWorkspace = absPath
-			}
-			if err := os.MkdirAll(newWorkspace, 0755); err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				w.Write([]byte(fmt.Sprintf(`{"error": "failed to create workspace directory: %s"}`, err.Error())))
-				return
-			}
-		}
-
-		s.mu.Lock()
-		for _, dbConn := range s.configDBs {
-			dbConn.Close()
-		}
-		for _, mgr := range s.dbManagers {
-			mgr.Close()
-		}
-		s.configDBs = make(map[string]*sql.DB)
-		s.dbManagers = make(map[string]*db.DBManager)
-		s.workspaceDir = newWorkspace
-		s.currentProject = "default"
-		s.mu.Unlock()
-
-		json.NewEncoder(w).Encode(map[string]string{
-			"status":        "success",
-			"workspace_dir": s.workspaceDir,
-		})
-		return
-	}
-
-	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	json.NewEncoder(w).Encode(map[string]string{
+		"workspace_dir": s.workspaceDir,
+	})
 }
 
 func (s *APIServer) handleStats(w http.ResponseWriter, r *http.Request) {

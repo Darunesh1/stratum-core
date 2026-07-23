@@ -18,7 +18,6 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"stratum/config"
-	"stratum/db"
 	"stratum/docs"
 	"stratum/impute"
 	"stratum/openalex"
@@ -97,15 +96,6 @@ type GetTopicsResult struct {
 type GetWorkspaceArgs struct{}
 
 type GetWorkspaceResult struct {
-	WorkspaceDir string `json:"workspace_dir"`
-}
-
-type SetWorkspaceArgs struct {
-	WorkspaceDir string `json:"workspace_dir" jsonschema:"Path to the new local workspace root directory"`
-}
-
-type SetWorkspaceResult struct {
-	Status       string `json:"status"`
 	WorkspaceDir string `json:"workspace_dir"`
 }
 
@@ -376,11 +366,6 @@ func (s *APIServer) RegisterMCPTools() error {
 		Name:        "get_workspace",
 		Description: "Get the path to the current local workspace root directory.",
 	}, s.handleGetWorkspaceMCP)
-
-	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name:        "set_workspace",
-		Description: "Set/change the active local workspace root directory. Existing database connections and caches will be safely re-routed.",
-	}, s.handleSetWorkspaceMCP)
 
 	return nil
 }
@@ -1370,40 +1355,6 @@ func (s *APIServer) handleReadStateHistory() mcp.ResourceHandler {
 
 func (s *APIServer) handleGetWorkspaceMCP(ctx context.Context, req *mcp.CallToolRequest, args GetWorkspaceArgs) (*mcp.CallToolResult, GetWorkspaceResult, error) {
 	return &mcp.CallToolResult{}, GetWorkspaceResult{WorkspaceDir: s.workspaceDir}, nil
-}
-
-func (s *APIServer) handleSetWorkspaceMCP(ctx context.Context, req *mcp.CallToolRequest, args SetWorkspaceArgs) (*mcp.CallToolResult, SetWorkspaceResult, error) {
-	newWorkspace := strings.TrimSpace(args.WorkspaceDir)
-	if newWorkspace != "" {
-		absPath, err := filepath.Abs(newWorkspace)
-		if err == nil {
-			newWorkspace = absPath
-		}
-		if err := os.MkdirAll(newWorkspace, 0755); err != nil {
-			return nil, SetWorkspaceResult{}, fmt.Errorf("failed to create workspace directory: %w", err)
-		}
-	}
-
-	s.mu.Lock()
-	for _, dbConn := range s.configDBs {
-		dbConn.Close()
-	}
-	for _, mgr := range s.dbManagers {
-		mgr.Close()
-	}
-	s.configDBs = make(map[string]*sql.DB)
-	s.dbManagers = make(map[string]*db.DBManager)
-	s.workspaceDir = newWorkspace
-	s.currentProject = "default"
-	s.mu.Unlock()
-
-	msg := fmt.Sprintf("Workspace successfully switched to: %s", s.workspaceDir)
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: msg}},
-	}, SetWorkspaceResult{
-		Status:       "success",
-		WorkspaceDir: s.workspaceDir,
-	}, nil
 }
 
 // Project Management handlers
